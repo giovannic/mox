@@ -1,5 +1,6 @@
 from typing import Callable
-from jaxtyping import Array
+from jaxtyping import Array, PyTree
+from flax import linen as nn
 
 def maskedminmaxrelu(x: Array, min_x: Array, max_x: Array, idx: Array) -> Array:
     """maskedminmaxrelu.
@@ -99,7 +100,7 @@ def make_mmm_surrogate(
         y_max=standardise(jnp.ones(y_shape), y_mean, y_std)[0].reshape(-1),
         idx_max=idx_max
     )
-	surrogate_params = surrogate_model.init(key, x)
+    surrogate_params = surrogate_model.init(key, x)
 
     tx = optax.adam(learning_rate=.001)
     opt_state = tx.init(surrogate_params)
@@ -112,10 +113,10 @@ def make_mmm_surrogate(
     y_batched = jnp.reshape(y, (n_batches, batch_size, -1))
 
     epochs = 100
-    
+
     for i in range(epochs):
         key, key_i = random.split(key)
-        
+
         for b in random.permutation(key_i, n_batches, independent=True):
             loss_val, grads = loss_grad_fn(
                 surrogate_params,

@@ -1,0 +1,24 @@
+[project]
+name = "mox"
+version = "0.0.1"
+authors = [
+  { name="Giovanni Charles" },
+]
+description = "A package for training surrogate models"
+readme = "README.rst"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "jax>=0.4.10",
+  "flax>=0.6.10",
+  "optax>=0.1.5",
+  "jaxtyping>=0.2.19"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/giovannic/mox"
+"Bug Tracker" = "https://github.com/giovannic/mox/issues"
