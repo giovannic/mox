@@ -60,13 +60,16 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
     """
 
     if not isinstance(strategy, Iterable):
-        raise TypeError("""The strategy parameter should be iterable, such as a
-
-        list or tuple, containing strategy objects.""")
+        raise TypeError(
+            "The strategy parameter should be iterable, such as a " +
+            "list or tuple, containing strategy objects."
+        )
 
     if len(strategy) == 0:
-        raise ValueError("""The strategy list should contain at least one
-        strategy object.""")
+        raise ValueError(
+            "The strategy list should contain at least one " +
+            "strategy object."
+        )
 
     # Initialise sampler for LHS strategies
     lhs_dims = jnp.array([
