@@ -25,10 +25,15 @@ class LHSStrategy(Strategy):
         self.upper_bound = jnp.array(upper_bound)
 
         if self.lower_bound.shape != self.upper_bound.shape:
-            raise ValueError("Lower and upper bounds should have the same dimension.")
+            raise ValueError(
+                "Lower and upper bounds should have the same dimension."
+            )
 
         if (self.lower_bound > self.upper_bound).any():
-            raise ValueError("The lower bound should be less than or equal to the upper bound.")
+            raise ValueError(
+                "The lower bound should be less than or equal " +
+                "to the upper bound."
+            )
 
     def transform_samples(self, samples: Array):
         """transform_samples.
