@@ -16,7 +16,8 @@ dependencies = [
   "jax~=0.4.10",
   "flax~=0.6.10",
   "optax~=0.1.5",
-  "jaxtyping~=0.2.19"
+  "jaxtyping~=0.2.19",
+  "numpyro~=0.12.1"
 ]
 
 [project.urls]

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from scipy.stats.qmc import LatinHypercube
 from jaxtyping import PyTree, Array
 import jax.numpy as jnp
+from jax import random
 
 class Strategy(ABC): # pylint: disable=too-few-public-methods
     """Strategy. Abstract base class for strategy objects"""
@@ -46,6 +47,13 @@ class LHSStrategy(Strategy):
                 + self.lower_bound.flatten()
         ).reshape((-1,) + self.lower_bound.shape)
 
+@dataclass
+class DistStrategy(Strategy):
+    distribution: Any
+
+    def sample(self, key, sample_shape: int):
+        return self.distribution.sample(key, (sample_shape,))
+
 
 ParamStrategy = Union[
     Strategy,
@@ -83,18 +91,21 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
     ])
 
     if len(lhs_dims) > 0:
-        sampler = LatinHypercube(d=int(lhs_dims.sum()), seed=int(key[1]))
+        key_i, key = random.split(key)
+        sampler = LatinHypercube(d=int(lhs_dims.sum()), seed=int(key_i[1]))
         lhs_samples = _lhs_sample_generator(lhs_dims, sampler.random(num))
 
     # Create strategy sampling function
-    def sample_strategy(strat):
+    def sample_strategy(strat, key):
         if isinstance(strat, LHSStrategy):
-            return strat.transform_samples(next(lhs_samples))
+            return strat.transform_samples(next(lhs_samples)), key
 
-        return strategy.sample(num)
+        key, key_i = random.split(key)
+        return strat.sample(key_i, num), key_i
 
     # Do the sampling for each leaf
-    return _strategy_transformer(strategy, sample_strategy)
+
+    return _strategy_transformer(strategy, sample_strategy, key)[0]
 
 def strategy_iterator(strategy: List[ParamStrategy]):
     """strategy_iterator.
@@ -120,21 +131,23 @@ def strategy_iterator(strategy: List[ParamStrategy]):
             raise TypeError("Invalid Strategy object.")
 
 
-def _strategy_transformer(strategy: Any, fun: Callable):
-    if isinstance(strategy, LHSStrategy):
-        return fun(strategy)
+def _strategy_transformer(strategy: Any, fun: Callable, key: Any):
+    if isinstance(strategy, Strategy):
+        return fun(strategy, key)
 
     if isinstance(strategy, (list, tuple)):
-        return [
-            _strategy_transformer(sub_strategy, fun)
-            for sub_strategy in strategy
-        ]
+        result = []
+        for sub_strategy in strategy:
+            v, key = _strategy_transformer(sub_strategy, fun, key)
+            result.append(v)
+        return result, key
 
     if isinstance(strategy, dict):
-        return {
-            key: _strategy_transformer(sub_strategy, fun)
-            for key, sub_strategy in strategy.items()
-        }
+        result = {}
+        for k, sub_strategy in strategy.items():
+            v, key = _strategy_transformer(sub_strategy, fun, key)
+            result[k] = v
+        return result, key
 
     raise TypeError("Invalid Strategy object.")
 
