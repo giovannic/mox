@@ -1,4 +1,4 @@
-from typing import Callable, Any, Sequence 
+from typing import Callable, Any, Sequence, List, Tuple
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 import jax.numpy as jnp
@@ -70,23 +70,54 @@ class Vectoriser(nn.Module):
         )
 
 class Recover(nn.Module):
+    """Recover. Recover output PyTree from vectorised neural net output"""
 
+    y_shapes: List[Array]
     y_mean: PyTree
     y_std: PyTree
     y_min: PyTree
     y_max: PyTree
+    y_max: PyTree
 
     @nn.compact
     def __call__(self, y):
-        y = tree_unflatten(y, tree_structure(self.y_mean))
-        return self.recover(y)
+        y_boundaries = jnp.cumsum(
+            jnp.array([jnp.prod(s) for s in self.y_shapes])
+        )
+        y_leaves = [
+            leaf.reshape((y.shape[0],) + tuple(shape))
+            for leaf, shape in 
+            zip(jnp.split(y, y_boundaries, axis=1), self.y_shapes)
+        ]
+        y = tree_unflatten(
+            tree_structure(self.y_mean),
+            y_leaves
+        )
+        y = self.recover(y)
+        return self.limit(y)
 
-    def recover(self, y):
+    def recover(self, y: Array):
+        """recover. Perform inverse standardisation on y
+
+        :param y: 
+        """
         return tree_map(
             lambda y, mu, sigma: y * sigma + mu,
             y,
             self.y_mean,
             self.y_std
+        )
+
+    def limit(self, y: Array):
+        """limit. Stop output from exceeding limits
+
+        :param y:
+        """
+        return tree_map(
+            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
+            y,
+            self.y_min,
+            self.y_max
         )
 
 class Surrogate(nn.Module):

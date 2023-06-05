@@ -99,21 +99,41 @@ def test_vectorisation_works_for_dictionary_parameters():
     assert jnp.array_equal(x_vec, expected_x_vec)
 
 def test_output_recovery_works_for_dictionary_output():
-    y_expected = {
-        'output1': jnp.array([[1.5], [2.5]]),
-        'output2': jnp.array([[3.5, 4.5], [5.5, 6.5]])
-    }
-
     y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
     y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
-    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([4.0, 5.0])}
-    y_max = {'output1': jnp.array([3.0]), 'output2': jnp.array([6.0, 7.0])}
+    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([0.0, 0.0])}
+    y_max = {'output1': jnp.array([100.0]), 'output2': jnp.array([100.0, 100.0])}
 
-    y_vec = jnp.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
-    rec = Recover(y_mean, y_std, y_min, y_max)
+    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    y_expected = _freeze_attr({
+        'output1': jnp.array([[2.5], [4.0]]),
+        'output2': jnp.array([[6.5, 8.5], [9.5, 11.5]])
+    })
+    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
+    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
 
     key = random.PRNGKey(42)
     params = rec.init(key, y_vec)
     y = rec.apply(params, y_vec)
     
-    assert assert_tree_equal(y, y_expected)
+    assert_tree_equal(y, y_expected)
+
+def test_output_recovery_limits_outputs():
+    y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
+    y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
+    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([0.0, 0.0])}
+    y_max = {'output1': jnp.array([1.0]), 'output2': jnp.array([100.0, 100.0])}
+
+    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    y_expected = _freeze_attr({
+        'output1': jnp.array([[1.], [1.]]),
+        'output2': jnp.array([[6.5, 8.5], [9.5, 11.5]])
+    })
+    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
+    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
+
+    key = random.PRNGKey(42)
+    params = rec.init(key, y_vec)
+    y = rec.apply(params, y_vec)
+    
+    assert_tree_equal(y, y_expected)
