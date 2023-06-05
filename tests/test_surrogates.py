@@ -1,6 +1,8 @@
 import jax.numpy as jnp
 from jax.tree_util import tree_structure, tree_leaves
-from mox.surrogates import summary 
+from jax import random
+from mox.surrogates import summary, Vectoriser, Recover 
+from flax.linen.module import _freeze_attr
 
 def assert_tree_equal(x, y):
     assert tree_structure(x) == tree_structure(y)
@@ -77,3 +79,41 @@ def test_summary_with_custom_axes():
 
     assert_tree_equal(mean, expected_mean)
     assert_tree_equal(std, expected_std)
+
+def test_vectorisation_works_for_dictionary_parameters():
+    x_samples = _freeze_attr([{
+        'param1': jnp.array([[1.0, 2.0], [5.0, 6.0]]),
+        'param2': jnp.array([[3.0, 4.0], [7.0, 8.0]])
+    }])
+
+    x_mean = [{'param1': jnp.array([2.0]), 'param2': jnp.array([4.0])}]
+    x_std = [{'param1': jnp.array([1.0]), 'param2': jnp.array([1.0])}]
+
+    vec = Vectoriser(x_mean, x_std)
+
+    key = random.PRNGKey(42)
+    params = vec.init(key, x_samples)
+    x_vec = vec.apply(params, x_samples)
+    
+    expected_x_vec = jnp.array([[-1., 0., -1., 0.], [ 3., 4., 3., 4.]])
+    assert jnp.array_equal(x_vec, expected_x_vec)
+
+def test_output_recovery_works_for_dictionary_output():
+    y_expected = {
+        'output1': jnp.array([[1.5], [2.5]]),
+        'output2': jnp.array([[3.5, 4.5], [5.5, 6.5]])
+    }
+
+    y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
+    y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
+    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([4.0, 5.0])}
+    y_max = {'output1': jnp.array([3.0]), 'output2': jnp.array([6.0, 7.0])}
+
+    y_vec = jnp.array([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
+    rec = Recover(y_mean, y_std, y_min, y_max)
+
+    key = random.PRNGKey(42)
+    params = rec.init(key, y_vec)
+    y = rec.apply(params, y_vec)
+    
+    assert assert_tree_equal(y, y_expected)

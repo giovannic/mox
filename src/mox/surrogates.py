@@ -1,42 +1,44 @@
-from typing import Callable, Any
+from typing import Callable, Any, Sequence 
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 import jax.numpy as jnp
 import optax
 from jax import jit, value_and_grad, random
-from jax.tree_util import tree_map
+from jax.tree_util import tree_map, tree_structure, tree_flatten, tree_unflatten
 
-def maskedminmaxrelu(x: Array, min_x: Array, max_x: Array, idx: Array) -> Array:
-    """maskedminmaxrelu.
+def minrelu(x: Array, min_x: Array) -> Array:
+    """minrelu.
 
-    relu with a min and max input, however max_x is only set at idx
+    relu with a min input
 
     :param x: input array
     :type x: Array
     :param min_x: minimum value
     :type min_x: Array
-    :param max_x: maximum value
-    :type max_x: Array
-    :param idx: mask for the maximum
-    :type idx: Array
     :rtype: Array
     """
-    filtered_min = jnp.maximum(x, min_x)
-    filtered_max = jnp.minimum(filtered_min, max_x)
-    return filtered_min.at[idx].set(filtered_max[idx])
+    return jnp.maximum(x, min_x)
 
-class MaskedMinMaxMLP(nn.Module):
-    """MaskedMinMaxMLP.
+def maxrelu(x: Array, max_x: Array) -> Array:
+    """minrelu.
 
-    MLP model with a maskedminmaxrelu as an output
+    relu with a max input
+
+    :param x: input array
+    :type x: Array
+    :param max_x: maximum value
+    :type max_x: Array
+    :rtype: Array
+    """
+    return jnp.minimum(x, max_x)
+
+class MLP(nn.Module):
+    """MLP. A multi layer perceptron
     """
 
     units: int
     n_hidden: int
     n_output: int
-    y_min: Array
-    y_max: Array
-    idx_max: Array
 
     @nn.compact
     def __call__(self, x):
@@ -45,32 +47,83 @@ class MaskedMinMaxMLP(nn.Module):
             x = lyr(x)
             x = nn.relu(x)
         x = nn.Dense(self.n_output)(x)
-        return maskedminmaxrelu(x, self.y_min, self.y_max, self.idx_max)
 
-class StandardisedSurrogate():
-    """StandardisedSurrogate.
+class Vectoriser(nn.Module):
 
-    A wrapper class to standardise surrogate inputs and unstandardise surrogate
-    outputs.
+    x_mean: Sequence[PyTree]
+    x_std: Sequence[PyTree]
+
+    @nn.compact
+    def __call__(self, x):
+        x = self.standardise(x)
+        x = tree_map(lambda x: x.reshape((x.shape[0], -1)), x)
+        x, _ = tree_flatten(x)
+        x = jnp.concatenate(x, axis=1)
+        return x
+
+    def standardise(self, x):
+        return tree_map(
+            lambda x, mu, sigma: (x - mu) / sigma,
+            x,
+            self.x_mean,
+            self.x_std
+        )
+
+class Recover(nn.Module):
+
+    y_mean: PyTree
+    y_std: PyTree
+    y_min: PyTree
+    y_max: PyTree
+
+    @nn.compact
+    def __call__(self, y):
+        y = tree_unflatten(y, tree_structure(self.y_mean))
+        return self.recover(y)
+
+    def recover(self, y):
+        return tree_map(
+            lambda y, mu, sigma: y * sigma + mu,
+            y,
+            self.y_mean,
+            self.y_std
+        )
+
+class Surrogate(nn.Module):
+    """Surrogate module.
+
+    Surrogate module, which:
+
+    * standardises input arguments
+    * flattens the input structure
+    * estimates outputs with an nn.Module
+    * restructures the outputs
+    * applies range restrictions on the the outputs
     """
 
     x_mean: PyTree
-    x_std: PyTree 
-    y_mean: Array
-    y_std: Array
-    network: nn.Module
-    params: PyTree
+    x_std: PyTree
+    y_mean: PyTree
+    y_std: PyTree
+    y_min: PyTree
+    y_max: PyTree
+    units: int
+    n_hidden: int
+    n_output: int
+
+    def setup(self):
+        self.vec = Vectoriser(self.x_mean, self.x_std)
+        self.rec = Recover(self.y_mean, self.y_std)
+        self.nn = MLP(self.units, self.n_hidden, self.n_output)
 
     def __call__(self, x):
-        return unstandardise(
-            network.apply(params, standardise(x, x_mean, x_std)),
-            y_mean,
-            y_std
-        )
+        x = self.vec(x)
+        y = self.nn(x)
+        return self.rec(y)
 
-def make_mmm_surrogate(
+def make_surrogate(
         x: list[PyTree],
-        y: Array,
+        y: PyTree,
         y_min: Array,
         y_max: Array,
         idx_max: Array,
@@ -142,4 +195,3 @@ def summary(samples, axis=None):
         tree_map(jnp.mean, samples, axis),
         tree_map(jnp.std, samples, axis)
     )
-
