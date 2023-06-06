@@ -1,10 +1,14 @@
-from typing import Callable, Any, Sequence, List, Tuple
+from typing import Sequence, List, Tuple
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 import jax.numpy as jnp
-import optax
-from jax import jit, value_and_grad, random
-from jax.tree_util import tree_map, tree_structure, tree_flatten, tree_unflatten
+from jax.tree_util import (
+    tree_map,
+    tree_structure,
+    tree_unflatten,
+    tree_leaves
+)
+from .utils import tree_to_vector
 
 def minrelu(x: Array, min_x: Array) -> Array:
     """minrelu.
@@ -46,7 +50,7 @@ class MLP(nn.Module):
         for i, lyr in enumerate(layers):
             x = lyr(x)
             x = nn.relu(x)
-        x = nn.Dense(self.n_output)(x)
+        return nn.Dense(self.n_output)(x)
 
 class Vectoriser(nn.Module):
 
@@ -56,14 +60,11 @@ class Vectoriser(nn.Module):
     @nn.compact
     def __call__(self, x):
         x = self.standardise(x)
-        x = tree_map(lambda x: x.reshape((x.shape[0], -1)), x)
-        x, _ = tree_flatten(x)
-        x = jnp.concatenate(x, axis=1)
-        return x
+        return tree_to_vector(x)
 
     def standardise(self, x):
         return tree_map(
-            lambda x, mu, sigma: (x - mu) / sigma,
+            _standardise,
             x,
             self.x_mean,
             self.x_std
@@ -75,9 +76,6 @@ class Recover(nn.Module):
     y_shapes: List[Array]
     y_mean: PyTree
     y_std: PyTree
-    y_min: PyTree
-    y_max: PyTree
-    y_max: PyTree
 
     @nn.compact
     def __call__(self, y):
@@ -93,8 +91,7 @@ class Recover(nn.Module):
             tree_structure(self.y_mean),
             y_leaves
         )
-        y = self.recover(y)
-        return self.limit(y)
+        return self.recover(y)
 
     def recover(self, y: Array):
         """recover. Perform inverse standardisation on y
@@ -102,23 +99,21 @@ class Recover(nn.Module):
         :param y: 
         """
         return tree_map(
-            lambda y, mu, sigma: y * sigma + mu,
+            _inverse_standardise,
             y,
             self.y_mean,
             self.y_std
         )
 
-    def limit(self, y: Array):
-        """limit. Stop output from exceeding limits
+class Limiter(nn.Module):
+    """Limiter. limit outputs using relus"""
 
-        :param y:
-        """
-        return tree_map(
-            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
-            y,
-            self.y_min,
-            self.y_max
-        )
+    y_min: Array
+    y_max: Array
+
+    @nn.compact
+    def __call__(self, y):
+        return maxrelu(minrelu(y, self.y_min), self.y_max)
 
 class Surrogate(nn.Module):
     """Surrogate module.
@@ -134,6 +129,7 @@ class Surrogate(nn.Module):
 
     x_mean: PyTree
     x_std: PyTree
+    y_shapes: List[Array]
     y_mean: PyTree
     y_std: PyTree
     y_min: PyTree
@@ -144,80 +140,61 @@ class Surrogate(nn.Module):
 
     def setup(self):
         self.vec = Vectoriser(self.x_mean, self.x_std)
-        self.rec = Recover(self.y_mean, self.y_std)
+        self.rec = Recover(
+            self.y_shapes,
+            self.y_mean,
+            self.y_std,
+            self.y_min,
+            self.y_max
+        )
         self.nn = MLP(self.units, self.n_hidden, self.n_output)
+        if self.y_min is not None:
+            self.limiter = Limiter(
+                _standardise(tree_to_vector(self.y_min), self.y_mean, self.y_std),
+                _standardise(tree_to_vector(self.y_max), self.y_mean, self.y_std)
+            )
+        else:
+            self.limiter = lambda x: x
 
     def __call__(self, x):
         x = self.vec(x)
         y = self.nn(x)
+        y = self.limiter(y)
         return self.rec(y)
 
 def make_surrogate(
         x: list[PyTree],
         y: PyTree,
-        y_min: Array,
-        y_max: Array,
-        idx_max: Array,
-        loss: Callable[[PyTree, Array, Array], float],
-        key: Any
-    ) -> tuple[nn.Module, PyTree]:
+        nn: nn.Module=MLP,
+        x_std_axis: PyTree = None,
+        y_std_axis: PyTree = None,
+        y_min: Array = None,
+        y_max: Array = None,
+        units = 256,
+        n_hidden = 3
+    ) -> nn.Module:
     """make_surrogate.
 
-    Train a maskedminmax MLP surrogate and return a tuple including the flax
-    module and parameters
-
-    :param x: Function parameter samples
-    :type x: list[PyTree]
-    :param y: Function outputs
-    :type y: Array
-    :param y_min: Minimum function outputs
-    :type y_min: Array
-    :param y_max: Maximum function outputs
-    :type y_max: Array
-    :param idx_max: Mask for the maximum outputs
-    :type idx_max: Array
-    :param loss: Loss function for training
-    :type loss: Callable[[PyTree, Array, Array], float]
-    :rtype: tuple[nn.Module, PyTree]
+    Make a surrogate model from a function samples
     """
-    y_shape = y.shape[1:]
-    surrogate_model = MaskedMinMaxMLP(
-        units=288,
-        n_hidden=3,
-        n_output=jnp.product(jnp.array(y_shape)),
-        y_min=standardise(jnp.zeros(y_shape), y_mean, y_std)[0].reshape(-1),
-        y_max=standardise(jnp.ones(y_shape), y_mean, y_std)[0].reshape(-1),
-        idx_max=idx_max
+    x_mean, x_std = summary(x, x_std_axis)
+    y_mean, y_std = summary(y, y_std_axis)
+    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y)]
+    n_output = sum(jnp.prod(shape) for shape in y_shapes)
+    return Surrogate(
+        x_mean,
+        x_std,
+        y_shapes,
+        y_mean,
+        y_std,
+        y_min,
+        y_max,
+        units,
+        n_hidden,
+        n_output
     )
-    surrogate_params = surrogate_model.init(key, x)
 
-    tx = optax.adam(learning_rate=.001)
-    opt_state = tx.init(surrogate_params)
-    loss_grad_fn = value_and_grad(jit(loss))
-
-    batch_size = 100
-
-    n_batches = X.shape[0] // batch_size
-    X_batched = jnp.reshape(X, (n_batches, batch_size, -1))
-    y_batched = jnp.reshape(y, (n_batches, batch_size, -1))
-
-    epochs = 100
-
-    for i in range(epochs):
-        key, key_i = random.split(key)
-
-        for b in random.permutation(key_i, n_batches, independent=True):
-            loss_val, grads = loss_grad_fn(
-                surrogate_params,
-                X_batched[b],
-                y_batched[b]
-            )
-            updates, opt_state = tx.update(grads, opt_state)
-            surrogate_params = optax.apply_updates(surrogate_params, updates)
-
-    return (surrogate_model, surrogate_params)
-
-def summary(samples, axis=None):
+def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree]:
 
     if axis is None:
         return (tree_map(jnp.mean, samples), tree_map(jnp.std, samples))
@@ -226,3 +203,9 @@ def summary(samples, axis=None):
         tree_map(jnp.mean, samples, axis),
         tree_map(jnp.std, samples, axis)
     )
+
+def _standardise(x, mu, sigma):
+    return (x - mu) / sigma
+
+def _inverse_standardise(x, mu, sigma):
+    return x * sigma + mu

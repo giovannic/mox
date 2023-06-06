@@ -1,15 +1,9 @@
 import jax.numpy as jnp
-from jax.tree_util import tree_structure, tree_leaves
+from jax.tree_util import tree_leaves
 from jax import random
-from mox.surrogates import summary, Vectoriser, Recover 
+from mox.surrogates import summary, Vectoriser, Recover, Limiter
 from flax.linen.module import _freeze_attr
-
-def assert_tree_equal(x, y):
-    assert tree_structure(x) == tree_structure(y)
-    assert all(
-        jnp.array_equal(lx, ly)
-        for lx, ly in zip(tree_leaves(x), tree_leaves(y))
-    )
+from utils import assert_tree_equal
 
 def test_summary_gives_summary_for_mixed_samples_pytree():
     # Example test case with nested dictionary and jnp.array samples
@@ -128,7 +122,7 @@ def test_output_recovery_works_for_dictionary_output():
         'output2': jnp.array([[6.5, 8.5], [9.5, 11.5]])
     })
     y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
-    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
+    rec = Recover(y_shapes, y_mean, y_std)
 
     key = random.PRNGKey(42)
     params = rec.init(key, y_vec)
@@ -148,7 +142,7 @@ def test_output_recovery_works_for_list_output():
         jnp.array([[6.5, 8.5], [9.5, 11.5]])
     ])
     y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
-    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
+    rec = Recover(y_shapes, y_mean, y_std)
 
     key = random.PRNGKey(42)
     params = rec.init(key, y_vec)
@@ -156,22 +150,16 @@ def test_output_recovery_works_for_list_output():
 
     assert_tree_equal(y, y_expected)
 
-def test_output_recovery_limits_outputs():
-    y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
-    y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
-    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([0.0, 0.0])}
-    y_max = {'output1': jnp.array([1.0]), 'output2': jnp.array([100.0, 100.0])}
+def test_limiter_limits_outputs_to_constant_limits():
+    y_min = jnp.array([0.0, 0.0, 0.0])
+    y_max = jnp.array([1.0, 1.0, 1.0])
 
-    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-    y_expected = _freeze_attr({
-        'output1': jnp.array([[1.], [1.]]),
-        'output2': jnp.array([[6.5, 8.5], [9.5, 11.5]])
-    })
-    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
-    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
+    y_vec = jnp.array([1.0, -1.0, 3.0])
+    y_expected = jnp.array([1.0, 0.0, 1.0])
+    lim = Limiter(y_min, y_max)
 
     key = random.PRNGKey(42)
-    params = rec.init(key, y_vec)
-    y = rec.apply(params, y_vec)
-    
-    assert_tree_equal(y, y_expected)
+    params = lim.init(key, y_vec)
+    y = lim.apply(params, y_vec)
+
+    assert jnp.array_equal(y, y_expected)
