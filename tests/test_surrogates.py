@@ -98,6 +98,24 @@ def test_vectorisation_works_for_dictionary_parameters():
     expected_x_vec = jnp.array([[-1., 0., -1., 0.], [ 3., 4., 3., 4.]])
     assert jnp.array_equal(x_vec, expected_x_vec)
 
+def test_vectorisation_works_for_list_parameters():
+    x_samples = _freeze_attr([[
+        jnp.array([1.0, 2.0]),
+        jnp.array([3.0, 4.0])
+    ]])
+
+    x_mean = [[jnp.array([2.0]), jnp.array([4.0])]]
+    x_std = [[jnp.array([1.0]), jnp.array([1.0])]]
+
+    vec = Vectoriser(x_mean, x_std)
+
+    key = random.PRNGKey(42)
+    params = vec.init(key, x_samples)
+    x_vec = vec.apply(params, x_samples)
+
+    expected_x_vec = jnp.array([[-1., -1.], [-0., 0.]])
+    assert jnp.array_equal(x_vec, expected_x_vec)
+
 def test_output_recovery_works_for_dictionary_output():
     y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
     y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
@@ -116,6 +134,26 @@ def test_output_recovery_works_for_dictionary_output():
     params = rec.init(key, y_vec)
     y = rec.apply(params, y_vec)
     
+    assert_tree_equal(y, y_expected)
+
+def test_output_recovery_works_for_list_output():
+    y_mean = [jnp.array([2.0]), jnp.array([4.5, 5.5])]
+    y_std = [jnp.array([0.5]), jnp.array([1.0, 1.0])]
+    y_min = [jnp.array([0.0]), jnp.array([0.0, 0.0])]
+    y_max = [jnp.array([100.0]), jnp.array([100.0, 100.0])]
+
+    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    y_expected = _freeze_attr([
+        jnp.array([[2.5], [4.0]]),
+        jnp.array([[6.5, 8.5], [9.5, 11.5]])
+    ])
+    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
+    rec = Recover(y_shapes, y_mean, y_std, y_min, y_max)
+
+    key = random.PRNGKey(42)
+    params = rec.init(key, y_vec)
+    y = rec.apply(params, y_vec)
+
     assert_tree_equal(y, y_expected)
 
 def test_output_recovery_limits_outputs():
