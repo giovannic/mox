@@ -34,7 +34,7 @@ def train_surrogate(
     params = model.init(key, x)
 
     tx = optax.adam(learning_rate=.001)
-    opt_state = tx.init(model)
+    opt_state = tx.init(params)
     loss_grad_fn = value_and_grad(jit(
         lambda p, x, y: training_loss(model, p, loss, x, y)
     ))
@@ -57,7 +57,7 @@ def train_surrogate(
 
     return params
 
-def batch_tree(tree, batch_size):
+def batch_tree(tree: PyTree, batch_size: int) -> list[PyTree]:
     flattened, treedef = tree_flatten(tree)
     batched = [
         jnp.split(leaf, batch_size)
@@ -86,7 +86,7 @@ def nn_loss(
     loss: Callable[[Array, Array], float],
     x: PyTree,
     y: PyTree
-    ):
+    ) -> float:
     y = tree_to_vector(y)
     y_hat = model.apply(
         params,

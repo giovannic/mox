@@ -113,8 +113,6 @@ def test_vectorisation_works_for_list_parameters():
 def test_output_recovery_works_for_dictionary_output():
     y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
     y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
-    y_min = {'output1': jnp.array([0.0]), 'output2': jnp.array([0.0, 0.0])}
-    y_max = {'output1': jnp.array([100.0]), 'output2': jnp.array([100.0, 100.0])}
 
     y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     y_expected = _freeze_attr({
@@ -133,8 +131,6 @@ def test_output_recovery_works_for_dictionary_output():
 def test_output_recovery_works_for_list_output():
     y_mean = [jnp.array([2.0]), jnp.array([4.5, 5.5])]
     y_std = [jnp.array([0.5]), jnp.array([1.0, 1.0])]
-    y_min = [jnp.array([0.0]), jnp.array([0.0, 0.0])]
-    y_max = [jnp.array([100.0]), jnp.array([100.0, 100.0])]
 
     y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
     y_expected = _freeze_attr([
