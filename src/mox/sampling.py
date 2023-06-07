@@ -86,7 +86,8 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
 
     # Initialise sampler for LHS strategies
     lhs_dims = jnp.array([
-        jnp.prod(jnp.array(s.lower_bound.shape)) for s in strategy_iterator(strategy)
+        jnp.prod(jnp.array(s.lower_bound.shape), dtype=jnp.int32)
+        for s in strategy_iterator(strategy)
         if isinstance(s, LHSStrategy)
     ])
 
