@@ -3,6 +3,6 @@ from jax.tree_util import tree_flatten, tree_map
 import jax.numpy as jnp
 
 def tree_to_vector(x: PyTree) -> Array:
-    x = tree_map(lambda x: x.reshape((x.shape[0], -1)), x)
+    x = tree_map(lambda x: x.reshape((jnp.atleast_1d(x).shape[0], -1)), x)
     x, _ = tree_flatten(x)
     return jnp.concatenate(x, axis=1)
