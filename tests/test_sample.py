@@ -31,6 +31,23 @@ def test_strategy_iterator_with_dictionary_iterates_over_all_strategies():
     ])
     assert list(strategy_iterator(strategy)) == list((strategy.values()))
 
+def test_sample_works_with_scalar_arrays():
+    num_dimensions = 3
+    n = 3
+    strategy = [
+        LHSStrategy(jnp.array(0), jnp.array(1))
+        for _ in range(n)
+    ]
+
+    mock_latin_hypercube = Mock(wraps=LatinHypercube)
+    with patch('mox.sampling.LatinHypercube', mock_latin_hypercube):
+        sample(strategy, 10, key)
+
+    mock_latin_hypercube.assert_called_once_with(
+        d=num_dimensions,
+        seed=ANY
+    )
+
 def test_sample_calls_latin_hypercube_with_correct_dimensions():
     num_dimensions = 9
     n = 3
