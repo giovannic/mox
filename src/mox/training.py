@@ -5,6 +5,7 @@ from jax.tree_util import tree_flatten, tree_unflatten
 from jaxtyping import Array, PyTree
 from typing import Callable, Any 
 from flax import linen as nn
+from flax.linen.module import _freeze_attr
 from .utils import tree_to_vector
 
 def train_surrogate(
@@ -29,6 +30,7 @@ def train_surrogate(
     :type loss: Callable[[Array, Array], float]
     :rtype: nn.Module
     """
+    x = _freeze_attr(x)
     params = model.init(key, x)
 
     tx = optax.adam(learning_rate=.001)
