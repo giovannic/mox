@@ -1,12 +1,12 @@
 import optax
 from jax import jit, value_and_grad, random, vmap
 import jax.numpy as jnp
-from jax.tree_util import tree_flatten, tree_unflatten
+from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jaxtyping import Array, PyTree
 from typing import Callable, Any 
 from flax import linen as nn
 from flax.linen.module import _freeze_attr
-from .utils import tree_to_vector
+from .surrogates import _standardise
 
 def train_surrogate(
         x: list[PyTree],
@@ -31,18 +31,24 @@ def train_surrogate(
     :rtype: nn.Module
     """
     x = _freeze_attr(x)
-    params = model.init(key, x)
+    params = model.init(key, tree_map(lambda x: x[0], x))
 
-    tx = optax.adam(learning_rate=.001)
+    tx = optax.adam(learning_rate=learning_rate)
     opt_state = tx.init(params)
-    loss_grad_fn = value_and_grad(jit(
+    # loss_grad_fn = value_and_grad(jit(
+        # lambda p, x, y: training_loss(model, p, loss, x, y)
+    # ))
+    loss_grad_fn = value_and_grad(
         lambda p, x, y: training_loss(model, p, loss, x, y)
-    ))
+    )
+
+    # standardise y for the loss function
+    y = tree_map(_standardise, y, model.y_mean, model.y_std)
 
     x = batch_tree(x, batch_size)
     y = batch_tree(y, batch_size)
     n_batches = len(x)
-    
+
     for i in range(epochs):
         key, key_i = random.split(key)
 
@@ -71,26 +77,36 @@ def batch_tree(tree: PyTree, batch_size: int) -> list[PyTree]:
 def training_loss(
     model: nn.Module,
     params: PyTree,
-    loss: Callable[[Array, Array], float],
+    loss: Callable[[PyTree, PyTree], float],
     x: PyTree,
     y: PyTree
     ) -> float:
     return jnp.mean(
-        vmap(lambda x, y: nn_loss(model, params, loss, x, y))(x, y),
+        vmap(
+            lambda x, y: nn_loss(model, params, loss, x, y),
+            in_axes=[tree_map(lambda x: 0, x), tree_map(lambda x: 0, y)]
+        )(
+            x,
+            y
+        ),
         axis=0
     )
 
 def nn_loss(
     model: nn.Module,
     params: PyTree,
-    loss: Callable[[Array, Array], float],
+    loss: Callable[[PyTree, PyTree], float],
     x: PyTree,
     y: PyTree
     ) -> float:
-    y = tree_to_vector(y)
     y_hat = model.apply(
         params,
         x,
-        method = lambda module, x: module.limiter(module.nn(module.vec(x)))
+        method = t
     )
     return loss(y, y_hat)
+
+def t(module, x):
+    return module.limiter(
+        module.rec(module.nn(module.vec(module.std(x))))
+    )
