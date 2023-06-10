@@ -1,4 +1,4 @@
-from typing import Sequence, List, Tuple, Any, Optional
+from typing import Sequence, List, Tuple, Any, Optional, Union
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 from flax.linen import Module
@@ -43,7 +43,7 @@ class MLP(Module):
 
     units: int
     n_hidden: int
-    n_output: int
+    n_output: Union[int, Array]
 
     @nn.compact
     def __call__(self, x):
@@ -80,20 +80,20 @@ class InverseStandardiser(nn.Module):
 class Recover(nn.Module):
     """Recover. Recover output PyTree from vectorised neural net output"""
 
-    y_shapes: List[Array]
+    y_shapes: List[Tuple]
     y_def: Any
+    y_boundaries: Tuple
 
-    @nn.compact
     def __call__(self, y):
-        y_boundaries = jnp.cumsum(
-            jnp.array([jnp.prod(s) for s in self.y_shapes])
-        )
         y_leaves = [
-            leaf.reshape(tuple(shape))
+            leaf.reshape(shape)
             for leaf, shape in 
-            zip(jnp.split(y, y_boundaries), self.y_shapes)
+            zip(jnp.split(y, self.y_boundaries), self.y_shapes)
         ]
         return tree_unflatten(self.y_def, y_leaves)
+
+def _take_leaf(vector: Array, start: int, end: int, shape: tuple):
+    return vector[start:end].reshape(shape)
 
 class Limiter(nn.Module):
     """Limiter. limit outputs using relus"""
@@ -124,19 +124,24 @@ class Surrogate(nn.Module):
 
     x_mean: PyTree
     x_std: PyTree
-    y_shapes: List[Array]
+    y_shapes: List[Tuple]
+    y_boundaries: Tuple
     y_mean: PyTree
     y_std: PyTree
     y_min: PyTree
     y_max: PyTree
     units: int
     n_hidden: int
-    n_output: int
+    n_output: Union[int, Array]
 
     def setup(self):
         self.vec = Vectoriser()
         self.std = Standardiser(self.x_mean, self.x_std)
-        self.rec = Recover(self.y_shapes, tree_structure(self.y_mean))
+        self.rec = Recover(
+            self.y_shapes,
+            tree_structure(self.y_mean),
+            self.y_boundaries
+        )
         self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
         self.nn = MLP(self.units, self.n_hidden, self.n_output)
         if self.y_min is not None:
@@ -156,7 +161,7 @@ class Surrogate(nn.Module):
 def make_surrogate(
         x: list[PyTree],
         y: PyTree,
-        nn: Module=MLP,
+        nn: Any=MLP,
         x_std_axis: Optional[PyTree] = None,
         y_std_axis: Optional[PyTree] = None,
         y_min: Optional[Array] = None,
@@ -170,12 +175,17 @@ def make_surrogate(
     """
     x_mean, x_std = summary(x, x_std_axis)
     y_mean, y_std = summary(y, y_std_axis)
-    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y)]
-    n_output = sum(jnp.prod(shape) for shape in y_shapes)
+    y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y)]
+    y_boundaries = tuple([
+        int(i) for i in
+        jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
+    ])
+    n_output = y_boundaries[-1]
     return Surrogate(
         x_mean,
         x_std,
         y_shapes,
+        y_boundaries,
         y_mean,
         y_std,
         y_min,

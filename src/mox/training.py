@@ -35,12 +35,9 @@ def train_surrogate(
 
     tx = optax.adam(learning_rate=learning_rate)
     opt_state = tx.init(params)
-    # loss_grad_fn = value_and_grad(jit(
-        # lambda p, x, y: training_loss(model, p, loss, x, y)
-    # ))
-    loss_grad_fn = value_and_grad(
+    loss_grad_fn = value_and_grad(jit(
         lambda p, x, y: training_loss(model, p, loss, x, y)
-    )
+    ))
 
     # standardise y for the loss function
     y = tree_map(_standardise, y, model.y_mean, model.y_std)
@@ -102,11 +99,8 @@ def nn_loss(
     y_hat = model.apply(
         params,
         x,
-        method = t
+        method = lambda module, x: module.limiter(
+            module.rec(module.nn(module.vec(module.std(x))))
+        )
     )
     return loss(y, y_hat)
-
-def t(module, x):
-    return module.limiter(
-        module.rec(module.nn(module.vec(module.std(x))))
-    )
