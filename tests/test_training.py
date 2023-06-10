@@ -1,6 +1,8 @@
-from mox.training import batch_tree, nn_loss
+from mox.training import batch_tree, nn_loss, train_surrogate
 from mox.surrogates import make_surrogate
+from mox.loss import mse
 from jax import numpy as jnp
+from jax.tree_util import tree_structure
 from utils import assert_tree_equal
 from jax import random
 from unittest.mock import MagicMock
@@ -25,15 +27,15 @@ def test_batch_tree_with_divisible_samples():
         'param2': jnp.array([[13.0, 14.0], [15.0, 16.0]])
     })
 
-def test_nn_loss_extracts_vectorised_outputs():
+def test_nn_loss_approximates_y_with_the_correct_shape():
     x_samples = _freeze_attr([{
-        'param1': jnp.array([[1.0, 2.0], [3.0, 4.0]]),
-        'param2': jnp.array([[5.0, 6.0], [7.0, 8.0]])
+        'param1': jnp.array([[1.0, 2.0]]),
+        'param2': jnp.array([[5.0, 6.0]])
     }])
-    y_samples = {
-        'output1': jnp.array([[1.0, 2.0], [3.0, 4.0]]),
-        'output2': jnp.array([[5.0, 6.0], [7.0, 8.0]])
-    }
+    y_samples = _freeze_attr({
+        'output1': jnp.array([[1.0, 2.0]]),
+        'output2': jnp.array([[5.0, 6.0]])
+    })
 
     model = make_surrogate(x_samples, y_samples)
     key = random.PRNGKey(42)
@@ -42,5 +44,8 @@ def test_nn_loss_extracts_vectorised_outputs():
     loss = MagicMock()
     _ = nn_loss(model, params, loss, x_samples, y_samples)
     loss.assert_called_once()
-    assert loss.call_args_list[0][0][0].shape == (2, 4)
-    assert loss.call_args_list[0][0][1].shape == (2, 4)
+    assert tree_structure(
+            loss.call_args_list[0][0][0]
+        ) == tree_structure(
+            loss.call_args_list[0][0][1]
+        )

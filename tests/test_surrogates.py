@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from jax.tree_util import tree_leaves
-from jax import random
+from jax.tree_util import tree_structure
+from jax import random, jit
 from mox.surrogates import summary, Vectoriser, Recover, Limiter
 from flax.linen.module import _freeze_attr
 from utils import assert_tree_equal
@@ -75,21 +75,18 @@ def test_summary_with_custom_axes():
     assert_tree_equal(std, expected_std)
 
 def test_vectorisation_works_for_dictionary_parameters():
-    x_samples = _freeze_attr([{
-        'param1': jnp.array([[1.0, 2.0], [5.0, 6.0]]),
-        'param2': jnp.array([[3.0, 4.0], [7.0, 8.0]])
-    }])
+    x_samples = [{
+        'param1': jnp.array([[1.0, 2.0]]),
+        'param2': jnp.array([[3.0, 4.0]])
+    }]
 
-    x_mean = [{'param1': jnp.array([2.0]), 'param2': jnp.array([4.0])}]
-    x_std = [{'param1': jnp.array([1.0]), 'param2': jnp.array([1.0])}]
-
-    vec = Vectoriser(x_mean, x_std)
+    vec = Vectoriser()
 
     key = random.PRNGKey(42)
     params = vec.init(key, x_samples)
     x_vec = vec.apply(params, x_samples)
     
-    expected_x_vec = jnp.array([[-1., 0., -1., 0.], [ 3., 4., 3., 4.]])
+    expected_x_vec = jnp.array([1., 2., 3., 4.])
     assert jnp.array_equal(x_vec, expected_x_vec)
 
 def test_vectorisation_works_for_list_parameters():
@@ -98,29 +95,23 @@ def test_vectorisation_works_for_list_parameters():
         jnp.array([3.0, 4.0])
     ]])
 
-    x_mean = [[jnp.array([2.0]), jnp.array([4.0])]]
-    x_std = [[jnp.array([1.0]), jnp.array([1.0])]]
-
-    vec = Vectoriser(x_mean, x_std)
+    vec = Vectoriser()
 
     key = random.PRNGKey(42)
     params = vec.init(key, x_samples)
     x_vec = vec.apply(params, x_samples)
 
-    expected_x_vec = jnp.array([[-1., -1.], [-0., 0.]])
+    expected_x_vec = jnp.array([1., 2., 3., 4.])
     assert jnp.array_equal(x_vec, expected_x_vec)
 
 def test_output_recovery_works_for_dictionary_output():
-    y_mean = {'output1': jnp.array([2.0]), 'output2': jnp.array([4.5, 5.5])}
-    y_std = {'output1': jnp.array([0.5]), 'output2': jnp.array([1.0, 1.0])}
-
-    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    y_vec = jnp.array([1.0, 2.0, 3.0])
     y_expected = _freeze_attr({
-        'output1': jnp.array([[2.5], [4.0]]),
-        'output2': jnp.array([[6.5, 8.5], [9.5, 11.5]])
+        'output1': jnp.array([1.0]),
+        'output2': jnp.array([2.0, 3.0])
     })
-    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
-    rec = Recover(y_shapes, y_mean, y_std)
+    y_shapes = [jnp.array([1]), jnp.array([2])]
+    rec = Recover(y_shapes, tree_structure(y_expected), jnp.array([1, 3]))
 
     key = random.PRNGKey(42)
     params = rec.init(key, y_vec)
@@ -128,17 +119,29 @@ def test_output_recovery_works_for_dictionary_output():
     
     assert_tree_equal(y, y_expected)
 
-def test_output_recovery_works_for_list_output():
-    y_mean = [jnp.array([2.0]), jnp.array([4.5, 5.5])]
-    y_std = [jnp.array([0.5]), jnp.array([1.0, 1.0])]
+def test_recovery_is_jitable():
+    y_vec = jnp.array([1.0, 2.0, 3.0])
+    y_expected = _freeze_attr({
+        'output1': jnp.array([1.0]),
+        'output2': jnp.array([2.0, 3.0])
+    })
+    y_shapes = [(1,), (2,)]
+    rec = Recover(y_shapes, tree_structure(y_expected), (1, 3))
 
-    y_vec = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    key = random.PRNGKey(42)
+    params = rec.init(key, y_vec)
+    y = jit(lambda y: rec.apply(params, y))(y_vec)
+    
+    assert_tree_equal(y, y_expected)
+
+def test_output_recovery_works_for_list_output():
+    y_vec = jnp.array([1.0, 2.0, 3.0])
     y_expected = _freeze_attr([
-        jnp.array([[2.5], [4.0]]),
-        jnp.array([[6.5, 8.5], [9.5, 11.5]])
+        jnp.array([1.0]),
+        jnp.array([2.0, 3.0])
     ])
-    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y_expected)]
-    rec = Recover(y_shapes, y_mean, y_std)
+    y_shapes = [(1,), (2,)]
+    rec = Recover(y_shapes, tree_structure(y_expected), (1, 3))
 
     key = random.PRNGKey(42)
     params = rec.init(key, y_vec)

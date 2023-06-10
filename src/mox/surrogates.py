@@ -1,6 +1,7 @@
-from typing import Sequence, List, Tuple
+from typing import Sequence, List, Tuple, Any, Optional, Union
 from jaxtyping import Array, PyTree
 from flax import linen as nn
+from flax.linen import Module
 import jax.numpy as jnp
 from jax.tree_util import (
     tree_map,
@@ -36,13 +37,13 @@ def maxrelu(x: Array, max_x: Array) -> Array:
     """
     return jnp.minimum(x, max_x)
 
-class MLP(nn.Module):
+class MLP(Module):
     """MLP. A multi layer perceptron
     """
 
     units: int
     n_hidden: int
-    n_output: int
+    n_output: Union[int, Array]
 
     @nn.compact
     def __call__(self, x):
@@ -52,68 +53,62 @@ class MLP(nn.Module):
             x = nn.relu(x)
         return nn.Dense(self.n_output)(x)
 
-class Vectoriser(nn.Module):
+class Vectoriser(Module):
+
+    @nn.compact
+    def __call__(self, x):
+        return tree_to_vector(x)
+
+class Standardiser(nn.Module):
 
     x_mean: Sequence[PyTree]
     x_std: Sequence[PyTree]
 
     @nn.compact
     def __call__(self, x):
-        x = self.standardise(x)
-        return tree_to_vector(x)
+        return tree_map(_standardise, x, self.x_mean, self.x_std)
 
-    def standardise(self, x):
-        return tree_map(
-            _standardise,
-            x,
-            self.x_mean,
-            self.x_std
-        )
+class InverseStandardiser(nn.Module):
+
+    x_mean: PyTree
+    x_std: PyTree
+
+    @nn.compact
+    def __call__(self, x):
+        return tree_map(_inverse_standardise, x, self.x_mean, self.x_std)
 
 class Recover(nn.Module):
     """Recover. Recover output PyTree from vectorised neural net output"""
 
-    y_shapes: List[Array]
-    y_mean: PyTree
-    y_std: PyTree
+    y_shapes: List[Tuple]
+    y_def: Any
+    y_boundaries: Tuple
 
-    @nn.compact
     def __call__(self, y):
-        y_boundaries = jnp.cumsum(
-            jnp.array([jnp.prod(s) for s in self.y_shapes])
-        )
         y_leaves = [
-            leaf.reshape((y.shape[0],) + tuple(shape))
+            leaf.reshape(shape)
             for leaf, shape in 
-            zip(jnp.split(y, y_boundaries, axis=1), self.y_shapes)
+            zip(jnp.split(y, self.y_boundaries), self.y_shapes)
         ]
-        y = tree_unflatten(
-            tree_structure(self.y_mean),
-            y_leaves
-        )
-        return self.recover(y)
+        return tree_unflatten(self.y_def, y_leaves)
 
-    def recover(self, y: Array):
-        """recover. Perform inverse standardisation on y
-
-        :param y: 
-        """
-        return tree_map(
-            _inverse_standardise,
-            y,
-            self.y_mean,
-            self.y_std
-        )
+def _take_leaf(vector: Array, start: int, end: int, shape: tuple):
+    return vector[start:end].reshape(shape)
 
 class Limiter(nn.Module):
     """Limiter. limit outputs using relus"""
 
-    y_min: Array
-    y_max: Array
+    y_min: PyTree
+    y_max: PyTree
 
     @nn.compact
     def __call__(self, y):
-        return maxrelu(minrelu(y, self.y_min), self.y_max)
+        return tree_map(
+            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
+            y,
+            self.y_min,
+            self.y_max
+        )
 
 class Surrogate(nn.Module):
     """Surrogate module.
@@ -129,47 +124,48 @@ class Surrogate(nn.Module):
 
     x_mean: PyTree
     x_std: PyTree
-    y_shapes: List[Array]
+    y_shapes: List[Tuple]
+    y_boundaries: Tuple
     y_mean: PyTree
     y_std: PyTree
     y_min: PyTree
     y_max: PyTree
     units: int
     n_hidden: int
-    n_output: int
+    n_output: Union[int, Array]
 
     def setup(self):
-        self.vec = Vectoriser(self.x_mean, self.x_std)
+        self.vec = Vectoriser()
+        self.std = Standardiser(self.x_mean, self.x_std)
         self.rec = Recover(
             self.y_shapes,
-            self.y_mean,
-            self.y_std,
-            self.y_min,
-            self.y_max
+            tree_structure(self.y_mean),
+            self.y_boundaries
         )
+        self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
         self.nn = MLP(self.units, self.n_hidden, self.n_output)
         if self.y_min is not None:
-            self.limiter = Limiter(
-                _standardise(tree_to_vector(self.y_min), self.y_mean, self.y_std),
-                _standardise(tree_to_vector(self.y_max), self.y_mean, self.y_std)
-            )
+            self.limiter = Limiter(self.y_min, self.y_max)
         else:
             self.limiter = lambda x: x
 
     def __call__(self, x):
+        x = self.std(x)
         x = self.vec(x)
         y = self.nn(x)
+        y = self.rec(y)
         y = self.limiter(y)
-        return self.rec(y)
+        y = self.inv_std(y)
+        return y
 
 def make_surrogate(
         x: list[PyTree],
         y: PyTree,
-        nn: nn.Module=MLP,
-        x_std_axis: PyTree = None,
-        y_std_axis: PyTree = None,
-        y_min: Array = None,
-        y_max: Array = None,
+        nn: Any=MLP,
+        x_std_axis: Optional[PyTree] = None,
+        y_std_axis: Optional[PyTree] = None,
+        y_min: Optional[Array] = None,
+        y_max: Optional[Array] = None,
         units = 256,
         n_hidden = 3
     ) -> nn.Module:
@@ -179,12 +175,17 @@ def make_surrogate(
     """
     x_mean, x_std = summary(x, x_std_axis)
     y_mean, y_std = summary(y, y_std_axis)
-    y_shapes = [jnp.array(leaf.shape[1:]) for leaf in tree_leaves(y)]
-    n_output = sum(jnp.prod(shape) for shape in y_shapes)
+    y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y)]
+    y_boundaries = tuple([
+        int(i) for i in
+        jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
+    ])
+    n_output = y_boundaries[-1]
     return Surrogate(
         x_mean,
         x_std,
         y_shapes,
+        y_boundaries,
         y_mean,
         y_std,
         y_min,
@@ -194,7 +195,7 @@ def make_surrogate(
         n_output
     )
 
-def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree]:
+def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
 
     if axis is None:
         return (tree_map(jnp.mean, samples), tree_map(jnp.std, samples))
