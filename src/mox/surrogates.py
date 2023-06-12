@@ -145,7 +145,21 @@ class Surrogate(nn.Module):
         self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
         self.nn = MLP(self.units, self.n_hidden, self.n_output)
         if self.y_min is not None:
-            self.limiter = Limiter(self.y_min, self.y_max)
+            # limiter is done before inverse standardisation, so we have to
+            # standardise y_min and y_max
+            y_min_std = tree_map(
+                _standardise,
+                self.y_min,
+                self.y_mean,
+                self.y_std
+            )
+            y_max_std = tree_map(
+                _standardise,
+                self.y_max,
+                self.y_mean,
+                self.y_std
+            )
+            self.limiter = Limiter(y_min_std, y_max_std)
         else:
             self.limiter = lambda x: x
 
