@@ -12,7 +12,7 @@ def train_surrogate(
         x: list[PyTree],
         y: PyTree,
         model: nn.Module,
-        loss: Callable[[Array, Array], float],
+        loss: Callable[[Array, Array], Array],
         key: Any,
         epochs: int = 100,
         batch_size: int = 100,
@@ -74,10 +74,10 @@ def batch_tree(tree: PyTree, batch_size: int) -> list[PyTree]:
 def training_loss(
     model: nn.Module,
     params: PyTree,
-    loss: Callable[[PyTree, PyTree], float],
+    loss: Callable[[PyTree, PyTree], Array],
     x: PyTree,
     y: PyTree
-    ) -> float:
+    ) -> Array:
     return jnp.mean(
         vmap(
             lambda x, y: nn_loss(model, params, loss, x, y),
@@ -92,10 +92,10 @@ def training_loss(
 def nn_loss(
     model: nn.Module,
     params: PyTree,
-    loss: Callable[[PyTree, PyTree], float],
+    loss: Callable[[PyTree, PyTree], Array],
     x: PyTree,
     y: PyTree
-    ) -> float:
+    ) -> Array:
     y_hat = model.apply(
         params,
         x,
