@@ -61,7 +61,7 @@ ParamStrategy = Union[
     Dict[str, 'ParamStrategy']
 ]
 
-def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
+def sample(strategy: List[ParamStrategy], num: int, key) -> list[PyTree]:
     """sample. Sample from a list of parameter sampling strategies
 
     :param strategy:
@@ -93,7 +93,10 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
 
     if len(lhs_dims) > 0:
         key_i, key = random.split(key)
-        sampler = LatinHypercube(d=int(lhs_dims.sum()), seed=int(key_i[1]))
+        sampler = LatinHypercube(
+            d=int(lhs_dims.sum()),
+            seed=int(key_i[1]) # type: ignore
+        )
         lhs_samples = _lhs_sample_generator(lhs_dims, sampler.random(num))
 
     # Create strategy sampling function
@@ -108,7 +111,7 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
 
     return _strategy_transformer(strategy, sample_strategy, key)[0]
 
-def strategy_iterator(strategy: List[ParamStrategy]):
+def strategy_iterator(strategy: Iterable[ParamStrategy]):
     """strategy_iterator.
 
     :param strategy:
@@ -137,18 +140,18 @@ def _strategy_transformer(strategy: Any, fun: Callable, key: Any):
         return fun(strategy, key)
 
     if isinstance(strategy, (list, tuple)):
-        result = []
+        list_result = []
         for sub_strategy in strategy:
             v, key = _strategy_transformer(sub_strategy, fun, key)
-            result.append(v)
-        return result, key
+            list_result.append(v)
+        return list_result, key
 
     if isinstance(strategy, dict):
-        result = {}
+        dict_result = {}
         for k, sub_strategy in strategy.items():
             v, key = _strategy_transformer(sub_strategy, fun, key)
-            result[k] = v
-        return result, key
+            dict_result[k] = v
+        return dict_result, key
 
     raise TypeError("Invalid Strategy object.")
 
