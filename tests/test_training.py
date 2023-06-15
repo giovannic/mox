@@ -1,6 +1,5 @@
-from mox.training import batch_tree, nn_loss, train_surrogate
+from mox.training import batch_tree, nn_loss
 from mox.surrogates import make_surrogate
-from mox.loss import mse
 from jax import numpy as jnp
 from jax.tree_util import tree_structure
 from utils import assert_tree_equal
