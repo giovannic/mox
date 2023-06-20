@@ -9,6 +9,7 @@ from scipy.stats.qmc import LatinHypercube
 from jaxtyping import PyTree, Array
 import jax.numpy as jnp
 from jax import random
+from flax.core.frozen_dict import FrozenDict
 
 class Strategy(ABC): # pylint: disable=too-few-public-methods
     """Strategy. Abstract base class for strategy objects"""
@@ -128,8 +129,8 @@ def strategy_iterator(strategy: Iterable[ParamStrategy]):
         elif isinstance(current, (list, tuple)):
             stack.extend(reversed(current))
 
-        elif isinstance(current, dict):
-            stack.extend(reversed(current.values()))
+        elif isinstance(current, (dict, FrozenDict)):
+            stack.extend(reversed(list(current.values())))
 
         else:
             raise TypeError("Invalid Strategy object.")
@@ -146,7 +147,7 @@ def _strategy_transformer(strategy: Any, fun: Callable, key: Any):
             list_result.append(v)
         return list_result, key
 
-    if isinstance(strategy, dict):
+    if isinstance(strategy, (dict, FrozenDict)):
         dict_result = {}
         for k, sub_strategy in strategy.items():
             v, key = _strategy_transformer(sub_strategy, fun, key)

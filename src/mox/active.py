@@ -43,7 +43,7 @@ def active_training(
 
     for i in range(epochs):
         key, key_i = random.split(key)
-        x_pool = sample(pool_strategy, n_pool, key_i)
+        x_pool = _freeze_attr(sample(pool_strategy, n_pool, key_i))
         x_pool = sample_towards_utility(
             x_pool,
             model,
@@ -55,12 +55,13 @@ def active_training(
             pool_learning_rate
         )
         y_pool = vmap(f, in_axes=tree_map(lambda _: 0, x_pool))(*x_pool)
+
         if replace_pool:
-            x_train = tree_map(jnp.concatenate, x, _freeze_attr(x_pool))
-            y_train = tree_map(jnp.concatenate, y, _freeze_attr(y_pool))
+            x_train = tree_map(concat, x, _freeze_attr(x_pool))
+            y_train = tree_map(concat, y, _freeze_attr(y_pool))
         else:
-            x_train = tree_map(jnp.concatenate, x_train, _freeze_attr(x_pool))
-            y_train = tree_map(jnp.concatenate, y_train, _freeze_attr(y_pool))
+            x_train = tree_map(concat, x_train, _freeze_attr(x_pool))
+            y_train = tree_map(concat, y_train, _freeze_attr(y_pool))
 
         x_train_batched = batch_tree(x_train, batch_size)
         y_train_batched = batch_tree(y_train, batch_size)
@@ -88,7 +89,7 @@ def sample_towards_utility(
         learning_rate: float = .01
     ):
     optimiser = optax.adam(learning_rate)
-    opt_state = optimiser.init(tree_map(lambda x: x[0], x))
+    opt_state = optimiser.init(x)
     loss_fn = jit(grad(lambda x: utility(x, model, params)))
 
     for _ in range(epochs):
@@ -109,3 +110,7 @@ def sample_towards_utility(
             )
 
     return x
+
+
+def concat(a, b): 
+    return jnp.concatenate([a, b])
