@@ -56,11 +56,11 @@ def active_training(
         )
         y_pool = vmap(f, in_axes=tree_map(lambda _: 0, x_pool))(*x_pool)
         if replace_pool:
-            x_train = tree_map(jnp.concatenate, x, x_pool)
-            y_train = tree_map(jnp.concatenate, y, y_pool)
+            x_train = tree_map(jnp.concatenate, x, _freeze_attr(x_pool))
+            y_train = tree_map(jnp.concatenate, y, _freeze_attr(y_pool))
         else:
-            x_train = tree_map(jnp.concatenate, x_train, x_pool)
-            y_train = tree_map(jnp.concatenate, y_train, y_pool)
+            x_train = tree_map(jnp.concatenate, x_train, _freeze_attr(x_pool))
+            y_train = tree_map(jnp.concatenate, y_train, _freeze_attr(y_pool))
 
         x_train_batched = batch_tree(x_train, batch_size)
         y_train_batched = batch_tree(y_train, batch_size)
