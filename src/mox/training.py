@@ -16,7 +16,7 @@ def train_surrogate(
         key: Any,
         epochs: int = 100,
         batch_size: int = 100,
-        learning_rate: float = .001
+        optimiser: Any = None
     ) -> PyTree:
     """train_surrogate.
     
@@ -33,7 +33,10 @@ def train_surrogate(
     x = _freeze_attr(x)
     params = model.init(key, tree_map(lambda x: x[0], x))
 
-    tx = optax.adam(learning_rate=learning_rate)
+    if optimiser is None:
+        tx = optax.adam(learning_rate=.001)
+    else:
+        tx = optimiser
     opt_state = tx.init(params)
     loss_grad_fn = value_and_grad(jit(
         lambda p, x, y: training_loss(model, p, loss, x, y)
@@ -99,8 +102,6 @@ def nn_loss(
     y_hat = model.apply(
         params,
         x,
-        method = lambda module, x: module.limiter(
-            module.rec(module.nn(module.vec(module.std(x))))
-        )
+        method = lambda module, x: module.unstandardised(x)
     )
     return loss(y, y_hat)
