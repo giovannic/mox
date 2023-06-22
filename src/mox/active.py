@@ -14,6 +14,7 @@ def active_training(
         x: list[PyTree],
         y: PyTree,
         model: nn.Module,
+        params: PyTree,
         loss: Callable[[Array, Array], Array],
         key: Any,
         f: Callable,
@@ -30,7 +31,6 @@ def active_training(
         pool_learning_rate: float = .01
     ):
     x = _freeze_attr(x)
-    params = model.init(key, tree_map(lambda x: x[0], x))
 
     tx = optax.adam(learning_rate=learning_rate)
     opt_state = tx.init(params)

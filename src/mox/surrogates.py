@@ -222,6 +222,9 @@ def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
         tree_map(jnp.std, samples, axis)
     )
 
+def pytree_init(key, model, x):
+    return model.init(key, tree_map(lambda x: x[0], x))
+
 def _standardise(x, mu, sigma):
     return (x - mu) / sigma
 

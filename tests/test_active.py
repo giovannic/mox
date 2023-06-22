@@ -3,7 +3,7 @@ from jax import numpy as jnp
 from jax import random, vmap
 from jax.tree_util import tree_map
 from mox.active import sample_towards_utility, active_training
-from mox.surrogates import make_surrogate, minrelu
+from mox.surrogates import make_surrogate, minrelu, pytree_init
 from mox.loss import mse
 from mox.sampling import LHSStrategy
 from flax.linen.module import _freeze_attr
@@ -63,10 +63,12 @@ def test_active_training_returns_params():
         return -mse(x, y_hat)
 
     key = random.PRNGKey(42)
+    params = pytree_init(key, model, x_samples)
     params = active_training(
         x_samples,
         y_samples,
         model,
+        params,
         mse,
         key,
         lambda x: {'output1': x['param1'], 'output2': x['param2']},

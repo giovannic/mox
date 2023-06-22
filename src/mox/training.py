@@ -12,6 +12,7 @@ def train_surrogate(
         x: list[PyTree],
         y: PyTree,
         model: nn.Module,
+        params: PyTree,
         loss: Callable[[Array, Array], Array],
         key: Any,
         epochs: int = 100,
@@ -31,7 +32,6 @@ def train_surrogate(
     :rtype: nn.Module
     """
     x = _freeze_attr(x)
-    params = model.init(key, tree_map(lambda x: x[0], x))
 
     if optimiser is None:
         tx = optax.adam(learning_rate=.001)
