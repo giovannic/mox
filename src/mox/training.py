@@ -3,18 +3,18 @@ from jax import jit, value_and_grad, random, vmap
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
 from jaxtyping import Array, PyTree
-from typing import Callable, Any 
+from typing import Callable, Any, Optional
 from flax import linen as nn
 from flax.linen.module import _freeze_attr
-from .surrogates import _standardise
+from .surrogates import _standardise, pytree_init
 
 def train_surrogate(
         x: list[PyTree],
         y: PyTree,
         model: nn.Module,
-        params: PyTree,
         loss: Callable[[Array, Array], Array],
         key: Any,
+        params: Optional[PyTree] = None,
         epochs: int = 100,
         batch_size: int = 100,
         optimiser: Any = None
@@ -32,6 +32,8 @@ def train_surrogate(
     :rtype: nn.Module
     """
     x = _freeze_attr(x)
+    if params is None:
+        params = pytree_init(key, model, x)
 
     if optimiser is None:
         tx = optax.adam(learning_rate=.001)
