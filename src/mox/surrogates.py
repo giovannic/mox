@@ -164,7 +164,7 @@ class Surrogate(nn.Module):
             self.limiter = lambda x: x
 
     def __call__(self, x):
-        y = self.inv_std(self.unstandardised(x))
+        y = self.inv_std(self.limiter(self.unstandardised(x)))
         return y
 
     def unstandardised(self, x):
@@ -172,7 +172,6 @@ class Surrogate(nn.Module):
         x = self.vec(x)
         y = self.nn(x)
         y = self.rec(y)
-        y = self.limiter(y)
         return y
 
 def make_surrogate(
