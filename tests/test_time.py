@@ -26,18 +26,18 @@ def test_positional_encoder_works_for_5d_time_series():
     x = jnp.arange(30).reshape((5, 6))
     t = jnp.arange(5) * 2
 
-    encoder = PositionalEncoding(1, 6, 50)
+    encoder = PositionalEncoding(6, 50)
     x_enc = encoder.apply({}, x, t)
 
-    assert x_enc.shape == (1, 5, 6)
+    assert x_enc.shape == (5, 6)
 
 def test_timeseries_fill_works():
     max_timestep = jnp.array(10)
-    x = jnp.arange(5).reshape((1, 5, 1))
+    x = jnp.arange(5).reshape((5, 1))
     t = jnp.arange(5) * 2
     encoder = FillEncoding()
     x_enc = encoder.apply({}, x, t, max_timestep)
-    x_enc_expected = jnp.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]).reshape((1, 10, 1))
+    x_enc_expected = jnp.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]).reshape((10, 1))
     assert jnp.array_equal(x_enc, x_enc_expected)
 
 def test_sequence_vectoriser_works():
