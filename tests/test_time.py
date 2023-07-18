@@ -1,91 +1,106 @@
 import jax.numpy as jnp
 from jax import random
 from flax.linen.module import _freeze_attr
-from jax.tree_util import tree_structure
-from mox.timeseries_embedding import (
-    positional_encoding,
-    fill_encoding
+from jax.tree_util import tree_structure, tree_leaves
+from mox.seq2seq.encoding import (
+    PositionalEncoding,
+    FillEncoding
 )
-from mox.seq2seq_surrogates import (
-    make_rnn_seq2seq_surrogate,
-    make_transformer_seq2seq_surrogate,
-    RecoverSeqStructure
-)
+from mox.seq2seq.surrogates import RecoverSeq
+from mox.seq2seq.rnn import make_rnn_surrogate, SequenceVectoriser
+from mox.seq2seq.transformer import TransformerSurrogate
 from utils import assert_tree_equal
 
 #TODO:
-# 1. test positional encoding
-# 2. test fill encoding
+# 3. test rnn encoder decoder seq2seq surrogate specification
 # 3. test rnn seq2seq surrogate specification
 # 3.1 test output encoding and recovery for seq2seq surrogate
 # 3.2 (optional) test transformer seq2seq surrogate specification
 # 4. test training loop
 
-def positional_encoder_works_for_2d_time_series():
-    x_samples = [
-        jnp.array([[1., 2., 3., 4.]])
+#TODO really though:
+# recreate what you already have before you do all this crazy stuff
+# 1. direct seq2seq with variable sequences
+
+def test_positional_encoder_works_for_5d_time_series():
+    x = jnp.arange(30).reshape((5, 6))
+    t = jnp.arange(5) * 2
+
+    encoder = PositionalEncoding(1, 6, 50)
+    x_enc = encoder.apply({}, x, t)
+
+    assert x_enc.shape == (1, 5, 6)
+
+def test_timeseries_fill_works():
+    max_timestep = jnp.array(10)
+    x = jnp.arange(5).reshape((1, 5, 1))
+    t = jnp.arange(5) * 2
+    encoder = FillEncoding()
+    x_enc = encoder.apply({}, x, t, max_timestep)
+    x_enc_expected = jnp.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]).reshape((1, 10, 1))
+    assert jnp.array_equal(x_enc, x_enc_expected)
+
+def test_sequence_vectoriser_works():
+    x = [
+        jnp.arange(5).reshape((1, 5, 1)),
+        jnp.repeat(jnp.arange(9).reshape((1, 1, 3, 3)), 5, axis=1),
     ]
-    t = jnp.array([1., 2., 3., 4.])
+    x_vec_expected = jnp.array([[
+        [0, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        [1, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        [2, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        [3, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        [4, 0, 1, 2, 3, 4, 5, 6, 7, 8],
+        [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1],
+    ]])
 
-    x_vec = positional_encoding(x_samples, t)
-    
-    expected_x_vec = jnp.array([1., 2., 3., 4.])
-    assert jnp.array_equal(x_vec, expected_x_vec)
-
-def timeseries_fill_works():
-    max_timestep = 10
-    x_seq = {
-        'beta': fill_encoding(
-            jnp.array([1, 2, 3, 4, 5]),
-            jnp.range(5) * 2,
-            max_timestep
-        ),
-        'ages': fill_encoding(
-            jnp.array([[1, 2, 3]]),
-            0,
-            max_timestep
-        )
-    }
-    x_seq_expected = {
-        'beta': jnp.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]),
-        'ages': jnp.repeat([[1, 2, 3]], 10, axis=1)
-    }
-    assert_tree_equal(x_seq, x_seq_expected)
-
+    vectoriser = SequenceVectoriser(6, -1)
+    x_vec = vectoriser.apply({}, x)
+    assert jnp.array_equal(x_vec, x_vec_expected)
 
 def test_output_recovery_works_for_list_of_timeseries():
+    y_expected = [
+        jnp.arange(3),
+        jnp.arange(9).reshape((3, 3))
+    ]
     y_vec = jnp.array([
-        [1., 2., 3.],
-        [4., 5., 6.],
-        [7., 8., 9.]
+        [0, 0, 1, 2],
+        [1, 3, 4, 5],
+        [2, 6, 7, 8]
     ])
-    y_expected = _freeze_attr([
-        jnp.array([1., 2., 3.]),
-        jnp.array([4., 5., 6.]),
-        jnp.array([7., 8., 9.])
-    ])
-    y_shapes = [(1,), (2,)]
-    rec = RecoverSeqStructure(y_shapes, tree_structure(y_expected), (1, 3))
 
-    key = random.PRNGKey(42)
-    params = rec.init(key, y_vec)
-    y = rec.apply(params, y_vec)
+    y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y_expected)]
+    y_boundaries = tuple([
+        int(i) for i in
+        jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
+    ])
+
+    rec = RecoverSeq(
+        y_shapes,
+        tree_structure(y_expected),
+        y_boundaries
+    )
+
+    y = rec.apply({}, y_vec)
 
     assert_tree_equal(y, y_expected)
 
 def test_e2e_timeseries():
-    x_static = {
-        'gamma': jnp.array(1),
-        'inf': jnp.array(.3)
-    }
-    x_seq = {
-        'beta': jnp.range(10),
-        'ages': jnp.repeat([[1, 2, 3]], 10, axis=1)
-    }
+    x = _freeze_attr([{
+        'gamma': jnp.array([1, 2]),
+        'inf': jnp.array([3, 4])
+    }])
 
-    y_seq = jnp.range(25).reshape((5,5))
+    x_seq = _freeze_attr([{
+        'beta': jnp.arange(10).reshape(2, 5, 1),
+        'ages': jnp.repeat(jnp.arange(6).reshape((2, 1, 3)), 5, axis=1),
+    }])
 
-    model = make_rnn_seq2seq_surrogate(x_static, x_seq, y_seq)
+    x_t = jnp.arange(5) * 2
+
+    y = _freeze_attr([jnp.arange(25).reshape((1,5,5))])
+
+    model = make_rnn_surrogate(x, x_seq, x_t, y, max_t=jnp.array(10))
     key = random.PRNGKey(42)
-    params = model.init(key, x_static, x_seq, y_seq)
+    params = model.init(key, x, x_seq, x_t, y)
     assert params is not None
