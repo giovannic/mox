@@ -107,11 +107,11 @@ class RNNSurrogate(nn.Module):
         else:
             self.limiter = lambda x: x
 
-    def __call__(self, x, x_seq, x_t, y):
-        y = self.limiter(self.inv_std(self.unstandardised(x, x_seq, x_t, y)))
+    def __call__(self, x, x_seq, x_t):
+        y = self.limiter(self.inv_std(self.unstandardised(x, x_seq, x_t)))
         return y
 
-    def unstandardised(self, x, x_seq, x_t, y):
+    def unstandardised(self, x, x_seq, x_t):
         # encode static
         x = self.std(x)
         x = vmap(self.vec, in_axes=[tree_map(lambda _: 0, x)])(x)
@@ -161,7 +161,7 @@ def make_rnn_surrogate(
     x_mean, x_std = summary(x, x_std_axis)
     x_seq_mean, x_seq_std = summary(x_seq, x_seq_std_axis)
     y_mean, y_std = summary(y, y_std_axis)
-    y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y)]
+    y_shapes = [leaf.shape[2:] for leaf in tree_leaves(y)]
     y_boundaries = tuple([
         int(i) for i in
         jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))

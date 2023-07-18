@@ -21,6 +21,7 @@ from utils import assert_tree_equal
 #TODO really though:
 # recreate what you already have before you do all this crazy stuff
 # 1. direct seq2seq with variable sequences
+# 2. does seq_lengths work with batch same size?
 
 def test_positional_encoder_works_for_5d_time_series():
     x = jnp.arange(30).reshape((5, 6))
@@ -98,9 +99,11 @@ def test_e2e_timeseries():
 
     x_t = jnp.arange(5) * 2
 
-    y = _freeze_attr([jnp.arange(25).reshape((1,5,5))])
+    y = _freeze_attr([jnp.arange(50).reshape((2, 5, 5))])
 
     model = make_rnn_surrogate(x, x_seq, x_t, y, max_t=jnp.array(10))
     key = random.PRNGKey(42)
-    params = model.init(key, x, x_seq, x_t, y)
+    params = model.init(key, x, x_seq, x_t)
+    y_hat = model.apply(params, x, x_seq, x_t)
     assert params is not None
+    assert y_hat[0].shape == (2, 10, 5)
