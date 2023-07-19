@@ -17,11 +17,12 @@ from ..surrogates import (
     summary
 )
 
-from .encoding import FillEncoding
+from .encoding import (FillEncoding, filler)
 from .surrogates import RecoverSeq
 
 PRNGKey = KeyArray
 LSTMCarry = Tuple[Array, Array]
+SeqInput = Tuple[List[PyTree], List[PyTree]]
 
 class SequenceVectoriser(nn.Module):
 
@@ -61,11 +62,12 @@ class DecoderLSTMCell(nn.RNNCellBase):
         return 1
 
 class RNNSurrogate(nn.Module):
-    x_t: Array
+    n_steps: Array
     x_mean: PyTree
     x_std: PyTree
     x_seq_mean: PyTree
     x_seq_std: PyTree
+    filler_pattern: Array
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
@@ -83,7 +85,7 @@ class RNNSurrogate(nn.Module):
         # sequence translation
         self.std_seq = Standardiser(self.x_seq_mean, self.x_seq_std)
         self.vec_seq = SequenceVectoriser()
-        self.filler = FillEncoding()
+        self.filler = FillEncoding(self.filler_pattern)
         self.rnn = nn.RNN(DecoderLSTMCell(self.units, self.n_output))
 
         # post prediction recovery
@@ -98,41 +100,40 @@ class RNNSurrogate(nn.Module):
         else:
             self.limiter = lambda x: x
 
-    def __call__(self, x, x_seq, x_t, n_steps):
-        y = self.limiter(self.inv_std(self.unstandardised(x, x_seq, x_t, n_steps)))
+    def __call__(self, x_in: SeqInput):
+        y = self.limiter(self.inv_std(self.unstandardised(x_in)))
         return y
 
-    def unstandardised(self, x, x_seq, x_t, n_steps):
+    def unstandardised(self, x_in:SeqInput):
+        x, x_seq = x_in
         # encode static
         x = self.std(x)
-        x = vmap(self.vec, in_axes=[tree_map(lambda _: 0, x)])(x)
+        x_vec = vmap(self.vec, in_axes=[tree_map(lambda _: 0, x)])(x)
 
         # encode sequence
         x_seq = self.std_seq(x_seq)
         x_seq = tree_map(
-            lambda leaf: vmap(self.filler, in_axes=[0, None, None])(
-                leaf,
-                x_t,
-                n_steps
-            ),
+            lambda leaf: vmap(self.filler)(leaf),
             x_seq
         )
-        x_seq = self.vec_seq(x_seq)
+        x_seq_vec = self.vec_seq(x_seq)
 
         # jointly decode sequence
         x_rep = jnp.repeat(
-            x[:, jnp.newaxis, :], x_seq.shape[1],
+            x_vec[:, jnp.newaxis, :],
+            self.n_steps,
             axis=1
         )
-        x_joint = jnp.concatenate([x_rep, x_seq], axis=2)
+        x_joint = jnp.concatenate([x_rep, x_seq_vec], axis=2)
         y = self.rnn(x_joint)
-        y = vmap(self.rec, in_axes=[0, None])(y, n_steps)
+        y = vmap(self.rec, in_axes=[0, None])(y, self.n_steps)
         return y
 
 def make_rnn_surrogate(
     x: list[PyTree],
     x_seq: list[PyTree],
     x_t: Array,
+    n_steps: Array,
     y: PyTree,
     x_std_axis: Optional[PyTree] = None,
     x_seq_std_axis: Optional[PyTree] = None,
@@ -152,11 +153,12 @@ def make_rnn_surrogate(
     ])
     n_output = y_boundaries[-1]
     return RNNSurrogate(
-        x_t,
+        n_steps,
         x_mean,
         x_std,
         x_seq_mean,
         x_seq_std,
+        filler(x_t, n_steps),
         y_shapes,
         y_boundaries,
         y_mean,

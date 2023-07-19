@@ -4,17 +4,15 @@ from flax.linen.module import _freeze_attr
 from jax.tree_util import tree_structure, tree_leaves
 from mox.seq2seq.encoding import (
     PositionalEncoding,
-    FillEncoding
+    FillEncoding,
+    filler
 )
 from mox.seq2seq.surrogates import RecoverSeq
 from mox.seq2seq.rnn import make_rnn_surrogate, SequenceVectoriser
 from mox.seq2seq.transformer import TransformerSurrogate
+from mox.seq2seq.training import train_seq2seq_surrogate
 from utils import assert_tree_equal
-
-#TODO really though:
-# recreate what you already have before you do all this crazy stuff
-# 1. does seq_lengths work with batch same size?
-# 2. test training loop
+from mox.loss import mse
 
 def test_positional_encoder_works_for_5d_time_series():
     x = jnp.arange(30).reshape((5, 6))
@@ -29,8 +27,8 @@ def test_timeseries_fill_works():
     max_timestep = jnp.array(10)
     x = jnp.arange(5).reshape((5, 1))
     t = jnp.arange(5) * 2
-    encoder = FillEncoding()
-    x_enc = encoder.apply({}, x, t, max_timestep)
+    encoder = FillEncoding(filler(t, max_timestep))
+    x_enc = encoder.apply({}, x)
     x_enc_expected = jnp.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 4]).reshape((10, 1))
     assert jnp.array_equal(x_enc, x_enc_expected)
 
@@ -93,10 +91,22 @@ def test_e2e_timeseries():
 
     y = _freeze_attr([jnp.arange(50).reshape((2, 5, 5))])
 
-    model = make_rnn_surrogate(x, x_seq, x_t, y)
+    n_steps = 5 
+    model = make_rnn_surrogate(x, x_seq, x_t, n_steps, y)
     key = random.PRNGKey(42)
-    n_steps = jnp.array(10)
-    params = model.init(key, x, x_seq, x_t, n_steps)
-    y_hat = model.apply(params, x, x_seq, x_t, n_steps)
+    x_in = (x, x_seq)
+    params = model.init(key, x_in)
+    y_hat = model.apply(params, x_in)
     assert params is not None
-    assert y_hat[0].shape == (2, 10, 5)
+    assert y_hat[0].shape == (2, 5, 5)
+    params = train_seq2seq_surrogate(
+        x_in,
+        y,
+        model,
+        params,
+        mse,
+        key,
+        epochs = 1,
+        batch_size = 1
+    )
+    assert params is not None

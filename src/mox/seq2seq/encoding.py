@@ -1,5 +1,6 @@
 import flax.linen as nn
 import jax.numpy as jnp
+from jaxtyping import Array
 
 class PositionalEncoding(nn.Module):
     d_model: int         # Hidden dimensionality of the input.
@@ -22,7 +23,10 @@ class PositionalEncoding(nn.Module):
 
 class FillEncoding(nn.Module):
 
-    @nn.compact
-    def __call__(self, x, t, max_t):
-        d = jnp.diff(jnp.concatenate([t, max_t.reshape(1,)]))
-        return jnp.repeat(x, d, axis=0)
+    filler: Array
+
+    def __call__(self, x):
+        return jnp.repeat(x, self.filler, axis=0)
+
+def filler(t, max_t):
+    return jnp.diff(jnp.append(t, max_t))
