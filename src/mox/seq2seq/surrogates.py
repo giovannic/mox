@@ -10,9 +10,9 @@ class RecoverSeq(nn.Module):
     y_def: Any
     y_boundaries: Tuple
 
-    def __call__(self, y):
+    def __call__(self, y, n_steps):
         y_leaves = [
-                leaf.reshape(y.shape[:1] + shape)
+            leaf.reshape(y.shape[:1] + shape)[:n_steps]
             for leaf, shape in 
             zip(jnp.split(y, self.y_boundaries[:-1], axis=1), self.y_shapes)
         ]

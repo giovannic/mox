@@ -25,17 +25,10 @@ LSTMCarry = Tuple[Array, Array]
 
 class SequenceVectoriser(nn.Module):
 
-    max_t: int
-    eos_id: float
-
     @nn.compact
     def __call__(self, x: PyTree):
         return jnp.concatenate([
-            jnp.pad(
-                x.reshape(x.shape[:2] + (-1,)),
-                ((0, 0), (0, self.max_t - x.shape[1]), (0, 0)),
-                constant_values=self.eos_id
-            )
+            x.reshape(x.shape[:2] + (-1,))
             for x in tree_leaves(x)
         ], axis=2)
 
@@ -81,8 +74,6 @@ class RNNSurrogate(nn.Module):
     y_max: PyTree
     units: int
     n_output: Union[int, Array]
-    max_t: int
-    terminator: int
 
     def setup(self):
         # static encoding
@@ -91,7 +82,7 @@ class RNNSurrogate(nn.Module):
 
         # sequence translation
         self.std_seq = Standardiser(self.x_seq_mean, self.x_seq_std)
-        self.vec_seq = SequenceVectoriser(self.max_t, self.terminator)
+        self.vec_seq = SequenceVectoriser()
         self.filler = FillEncoding()
         self.rnn = nn.RNN(DecoderLSTMCell(self.units, self.n_output))
 
@@ -107,42 +98,36 @@ class RNNSurrogate(nn.Module):
         else:
             self.limiter = lambda x: x
 
-    def __call__(self, x, x_seq, x_t):
-        y = self.limiter(self.inv_std(self.unstandardised(x, x_seq, x_t)))
+    def __call__(self, x, x_seq, x_t, n_steps):
+        y = self.limiter(self.inv_std(self.unstandardised(x, x_seq, x_t, n_steps)))
         return y
 
-    def unstandardised(self, x, x_seq, x_t):
+    def unstandardised(self, x, x_seq, x_t, n_steps):
         # encode static
         x = self.std(x)
         x = vmap(self.vec, in_axes=[tree_map(lambda _: 0, x)])(x)
 
         # encode sequence
-        seq_lengths = self.get_seq_lengths(x_seq)
         x_seq = self.std_seq(x_seq)
         x_seq = tree_map(
             lambda leaf: vmap(self.filler, in_axes=[0, None, None])(
                 leaf,
                 x_t,
-                self.max_t
+                n_steps
             ),
             x_seq
         )
         x_seq = self.vec_seq(x_seq)
 
         # jointly decode sequence
-        x_rep= jnp.repeat(
+        x_rep = jnp.repeat(
             x[:, jnp.newaxis, :], x_seq.shape[1],
             axis=1
         )
         x_joint = jnp.concatenate([x_rep, x_seq], axis=2)
-        _, y = self.rnn(x_joint, seq_lengths=seq_lengths, return_carry=True)
-        y = vmap(self.rec, in_axes=[0])(y)
+        y = self.rnn(x_joint)
+        y = vmap(self.rec, in_axes=[0, None])(y, n_steps)
         return y
-
-    def get_seq_lengths(self, inputs: PyTree) -> PyTree:
-        """Get segmentation mask for inputs."""
-        seq_shape = tree_leaves(inputs)[0].shape
-        return jnp.full((seq_shape[0]), seq_shape[1])
 
 def make_rnn_surrogate(
     x: list[PyTree],
@@ -155,7 +140,6 @@ def make_rnn_surrogate(
     y_min: Optional[Array] = None,
     y_max: Optional[Array] = None,
     units = 256,
-    max_t = jnp.array(100)
     ):
 
     x_mean, x_std = summary(x, x_std_axis)
@@ -180,7 +164,5 @@ def make_rnn_surrogate(
         y_min,
         y_max,
         units,
-        n_output,
-        max_t,
-        -1
+        n_output
     )
