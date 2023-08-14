@@ -24,9 +24,10 @@ class PositionalEncoding(nn.Module):
 class FillEncoding(nn.Module):
 
     filler: Array
+    max_t: int
 
     def __call__(self, x):
-        return jnp.repeat(x, self.filler, axis=0)
+        return jnp.repeat(x, self.filler, axis=0)[:self.max_t]
 
 def filler(t, max_t):
     return jnp.diff(jnp.append(t, max_t))

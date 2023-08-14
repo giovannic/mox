@@ -19,10 +19,10 @@ from .surrogates import _standardise
 class TrainState(train_state.TrainState):
     batch_stats: Any
 
-def batch_tree(tree: PyTree, batch_size: int) -> list[PyTree]:
+def batch_tree(tree: PyTree, n_batches: int) -> list[PyTree]:
     flattened, treedef = tree_flatten(tree)
     batched = [
-        jnp.split(leaf, batch_size)
+        jnp.split(leaf, n_batches)
         for leaf in flattened
     ]
     return [

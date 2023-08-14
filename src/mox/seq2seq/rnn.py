@@ -17,7 +17,7 @@ from ..surrogates import (
     summary
 )
 
-from .encoding import (FillEncoding, filler)
+from .encoding import FillEncoding, filler
 from .surrogates import RecoverSeq
 
 PRNGKey = KeyArray
@@ -85,7 +85,7 @@ class RNNSurrogate(nn.Module):
         # sequence translation
         self.std_seq = Standardiser(self.x_seq_mean, self.x_seq_std)
         self.vec_seq = SequenceVectoriser()
-        self.filler = FillEncoding(self.filler_pattern)
+        self.filler = FillEncoding(self.filler_pattern, self.n_steps)
         self.rnn = nn.RNN(DecoderLSTMCell(self.units, self.n_output))
 
         # post prediction recovery

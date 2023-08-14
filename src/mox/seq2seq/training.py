@@ -17,7 +17,7 @@ def train_seq2seq_surrogate(
         loss: Callable[[Array, Array], Array],
         key: Any,
         epochs: int = 100,
-        batch_size: int = 100,
+        n_batches: int = 100,
         optimiser: Any = None
     ) -> PyTree:
     """train_seq2seq_surrogate.
@@ -35,9 +35,9 @@ def train_seq2seq_surrogate(
 
     # batch the inputs
     x, x_seq = x_in
-    x_batched = batch_tree(x, batch_size)
-    x_seq_batched = batch_tree(x_seq, batch_size)
-    y_batched = batch_tree(y, batch_size)
+    x_batched = batch_tree(x, n_batches)
+    x_seq_batched = batch_tree(x_seq, n_batches)
+    y_batched = batch_tree(y, n_batches)
 
     loss_grad_fn = value_and_grad(jit(
         lambda p, x, x_seq, y: training_loss(
@@ -48,9 +48,6 @@ def train_seq2seq_surrogate(
             y
         )
     ))
-
-    
-    n_batches = len(x)
 
     for i in range(epochs):
         key, key_i = random.split(key)
