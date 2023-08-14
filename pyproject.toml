@@ -23,3 +23,9 @@ dependencies = [
 [project.urls]
 "Homepage" = "https://github.com/giovannic/mox"
 "Bug Tracker" = "https://github.com/giovannic/mox/issues"
+
+[tool.setuptools.package-data]
+"mox" = ["py.typed"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
