@@ -9,7 +9,6 @@ from mox.seq2seq.encoding import (
 )
 from mox.seq2seq.surrogates import RecoverSeq
 from mox.seq2seq.rnn import make_rnn_surrogate, SequenceVectoriser
-from mox.seq2seq.transformer import TransformerSurrogate
 from mox.seq2seq.training import train_seq2seq_surrogate
 from utils import assert_tree_equal
 from mox.loss import mse
@@ -107,6 +106,6 @@ def test_e2e_timeseries():
         mse,
         key,
         epochs = 1,
-        batch_size = 1
+        n_batches = 1
     )
     assert params is not None

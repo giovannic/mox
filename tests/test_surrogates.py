@@ -74,6 +74,9 @@ def test_summary_with_custom_axes():
     assert_tree_equal(mean, expected_mean)
     assert_tree_equal(std, expected_std)
 
+def test_standardiser_works_for_zero_variance():
+    raise NotImplementedError('TODO')
+
 def test_vectorisation_works_for_dictionary_parameters():
     x_samples = [{
         'param1': jnp.array([[1.0, 2.0]]),
@@ -162,3 +165,4 @@ def test_limiter_limits_outputs_to_constant_limits():
     y = lim.apply(params, y_vec)
 
     assert jnp.array_equal(y, y_expected)
+

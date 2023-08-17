@@ -10,6 +10,7 @@ from jax.tree_util import (
     tree_leaves
 )
 from .utils import tree_to_vector
+from functools import partial
 
 def minrelu(x: Array, min_x: Array) -> Array:
     """minrelu.
@@ -200,8 +201,8 @@ def make_surrogate(
 
     Make a surrogate model from a function samples
     """
-    x_mean, x_std = summary(x, x_std_axis)
-    y_mean, y_std = summary(y, y_std_axis)
+    x_mean, x_std = safe_summary(summary(x, x_std_axis))
+    y_mean, y_std = safe_summary(summary(y, y_std_axis))
     y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y)]
     y_boundaries = tuple([
         int(i) for i in
@@ -225,14 +226,19 @@ def make_surrogate(
     )
 
 def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
+    mean = partial(jnp.mean, keepdims=True)
+    std = partial(jnp.std, keepdims=True)
 
     if axis is None:
-        return (tree_map(jnp.mean, samples), tree_map(jnp.std, samples))
+        return (tree_map(mean, samples), tree_map(std, samples))
 
     return (
-        tree_map(jnp.mean, samples, axis),
-        tree_map(jnp.std, samples, axis)
+        tree_map(mean, samples, axis),
+        tree_map(std, samples, axis)
     )
+
+def safe_summary(x: Tuple[PyTree, PyTree]) -> Tuple[PyTree, PyTree]:
+    return (x[0], tree_map(lambda leaf: leaf.at[leaf == 0].set(1), x[1]))
 
 def pytree_init(key, model, x):
     return model.init(key, tree_map(lambda x: x[0], x), training=False)

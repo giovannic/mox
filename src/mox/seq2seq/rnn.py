@@ -14,7 +14,8 @@ from ..surrogates import (
     Standardiser,
     InverseStandardiser,
     Limiter,
-    summary
+    summary,
+    safe_summary
 )
 
 from .encoding import FillEncoding, filler
@@ -143,8 +144,8 @@ def make_rnn_surrogate(
     units = 256,
     ):
 
-    x_mean, x_std = summary(x, x_std_axis)
-    x_seq_mean, x_seq_std = summary(x_seq, x_seq_std_axis)
+    x_mean, x_std = safe_summary(summary(x, x_std_axis))
+    x_seq_mean, x_seq_std = safe_summary(summary(x_seq, x_seq_std_axis))
     y_mean, y_std = summary(y, y_std_axis)
     y_shapes = [leaf.shape[2:] for leaf in tree_leaves(y)]
     y_boundaries = tuple([
