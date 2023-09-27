@@ -2,7 +2,12 @@ from typing import Callable, Tuple
 from jax import numpy as jnp, vmap
 from jax.nn import softplus
 from jaxtyping import PyTree, Array
-from jax.tree_util import tree_leaves, tree_map, tree_leaves_with_path
+from jax.tree_util import (
+    tree_leaves,
+    tree_map,
+    tree_map_with_path,
+    tree_flatten
+)
 import flax.linen as nn
 
 LossSignature = Callable[[nn.Module, PyTree, PyTree, PyTree], Array]
@@ -16,7 +21,11 @@ def log_cosh(x: PyTree, y: PyTree) -> Array:
 
 def l2_loss(params: PyTree, alpha: Array):
     return jnp.sum(
-        alpha * jnp.stack(tree_leaves_with_path(_l2_loss_leaf, params))
+        alpha * jnp.stack(
+            tree_flatten(
+                tree_map_with_path(_l2_loss_leaf, params)
+            )[0]
+        )
     )
 
 def make_predictive_loss(f: Callable[[PyTree, PyTree], Array]) -> LossSignature:
@@ -68,7 +77,7 @@ def standardised_loss(
 def _l2_loss_leaf(path: Tuple, leaf: Array) -> Array:
     if path[-1].key == 'kernel':
         return (leaf ** 2).mean()
-    return jnp.zeros((1,))
+    return jnp.array(0.)
 
 def _diffs(x: PyTree, y: PyTree) -> Array:
     return jnp.concatenate([

@@ -41,9 +41,9 @@ def train_surrogate(
     else:
         tx = optimiser
     opt_state = tx.init(params)
-    loss_grad_fn = value_and_grad(
+    loss_grad_fn = value_and_grad(jit(
         lambda p, x, y: predictive_loss(model, p, x, y)
-    )
+    ))
 
     # standardise y for the loss function
     y = tree_map(_standardise, y, model.y_mean, model.y_std)
