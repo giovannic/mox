@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from scipy.stats.qmc import LatinHypercube
 from jaxtyping import PyTree, Array
 import jax.numpy as jnp
+from jax import random
+from flax.core.frozen_dict import FrozenDict
 
 class Strategy(ABC): # pylint: disable=too-few-public-methods
     """Strategy. Abstract base class for strategy objects"""
@@ -46,6 +48,13 @@ class LHSStrategy(Strategy):
                 + self.lower_bound.flatten()
         ).reshape((-1,) + self.lower_bound.shape)
 
+@dataclass
+class DistStrategy(Strategy):
+    distribution: Any
+
+    def sample(self, key, sample_shape: int):
+        return self.distribution.sample(key, (sample_shape,))
+
 
 ParamStrategy = Union[
     Strategy,
@@ -53,7 +62,7 @@ ParamStrategy = Union[
     Dict[str, 'ParamStrategy']
 ]
 
-def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
+def sample(strategy: List[ParamStrategy], num: int, key) -> list[PyTree]:
     """sample. Sample from a list of parameter sampling strategies
 
     :param strategy:
@@ -78,25 +87,32 @@ def sample(strategy: list[ParamStrategy], num: int, key) -> list[PyTree]:
 
     # Initialise sampler for LHS strategies
     lhs_dims = jnp.array([
-        jnp.prod(jnp.array(s.lower_bound.shape)) for s in strategy_iterator(strategy)
+        jnp.prod(jnp.array(s.lower_bound.shape), dtype=jnp.int32)
+        for s in strategy_iterator(strategy)
         if isinstance(s, LHSStrategy)
     ])
 
     if len(lhs_dims) > 0:
-        sampler = LatinHypercube(d=int(lhs_dims.sum()), seed=int(key[1]))
+        key_i, key = random.split(key)
+        sampler = LatinHypercube(
+            d=int(lhs_dims.sum()),
+            seed=int(key_i[1]) # type: ignore
+        )
         lhs_samples = _lhs_sample_generator(lhs_dims, sampler.random(num))
 
     # Create strategy sampling function
-    def sample_strategy(strat):
+    def sample_strategy(strat, key):
         if isinstance(strat, LHSStrategy):
-            return strat.transform_samples(next(lhs_samples))
+            return strat.transform_samples(next(lhs_samples)), key
 
-        return strategy.sample(num)
+        key, key_i = random.split(key)
+        return strat.sample(key_i, num), key_i
 
     # Do the sampling for each leaf
-    return _strategy_transformer(strategy, sample_strategy)
 
-def strategy_iterator(strategy: List[ParamStrategy]):
+    return _strategy_transformer(strategy, sample_strategy, key)[0]
+
+def strategy_iterator(strategy: Iterable[ParamStrategy]):
     """strategy_iterator.
 
     :param strategy:
@@ -113,28 +129,30 @@ def strategy_iterator(strategy: List[ParamStrategy]):
         elif isinstance(current, (list, tuple)):
             stack.extend(reversed(current))
 
-        elif isinstance(current, dict):
-            stack.extend(reversed(current.values()))
+        elif isinstance(current, (dict, FrozenDict)):
+            stack.extend(reversed(list(current.values())))
 
         else:
             raise TypeError("Invalid Strategy object.")
 
 
-def _strategy_transformer(strategy: Any, fun: Callable):
-    if isinstance(strategy, LHSStrategy):
-        return fun(strategy)
+def _strategy_transformer(strategy: Any, fun: Callable, key: Any):
+    if isinstance(strategy, Strategy):
+        return fun(strategy, key)
 
     if isinstance(strategy, (list, tuple)):
-        return [
-            _strategy_transformer(sub_strategy, fun)
-            for sub_strategy in strategy
-        ]
+        list_result = []
+        for sub_strategy in strategy:
+            v, key = _strategy_transformer(sub_strategy, fun, key)
+            list_result.append(v)
+        return list_result, key
 
-    if isinstance(strategy, dict):
-        return {
-            key: _strategy_transformer(sub_strategy, fun)
-            for key, sub_strategy in strategy.items()
-        }
+    if isinstance(strategy, (dict, FrozenDict)):
+        dict_result = {}
+        for k, sub_strategy in strategy.items():
+            v, key = _strategy_transformer(sub_strategy, fun, key)
+            dict_result[k] = v
+        return dict_result, key
 
     raise TypeError("Invalid Strategy object.")
 
