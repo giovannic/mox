@@ -1,18 +1,19 @@
 import optax
-from jax import jit, value_and_grad, random, vmap
+from jax import jit, value_and_grad, random
 import jax.numpy as jnp
 from jax.tree_util import tree_flatten, tree_unflatten, tree_map
-from jaxtyping import Array, PyTree
-from typing import Callable, Any, Optional
+from jaxtyping import PyTree
+from typing import Any, Optional
 from flax import linen as nn
 from flax.linen.module import _freeze_attr
 from .surrogates import _standardise, pytree_init
+from .loss import LossSignature
 
 def train_surrogate(
         x: list[PyTree],
         y: PyTree,
         model: nn.Module,
-        loss: Callable[[Array, Array], Array],
+        predictive_loss: LossSignature,
         key: Any,
         params: Optional[PyTree] = None,
         epochs: int = 100,
@@ -41,7 +42,7 @@ def train_surrogate(
         tx = optimiser
     opt_state = tx.init(params)
     loss_grad_fn = value_and_grad(jit(
-        lambda p, x, y: training_loss(model, p, loss, x, y)
+        lambda p, x, y: predictive_loss(model, p, x, y)
     ))
 
     # standardise y for the loss function
@@ -75,35 +76,3 @@ def batch_tree(tree: PyTree, batch_size: int) -> list[PyTree]:
         tree_unflatten(treedef, batch)
         for batch in zip(*batched)
     ]
-
-def training_loss(
-    model: nn.Module,
-    params: PyTree,
-    loss: Callable[[PyTree, PyTree], Array],
-    x: PyTree,
-    y: PyTree
-    ) -> Array:
-    return jnp.mean(
-        vmap(
-            lambda x, y: nn_loss(model, params, loss, x, y),
-            in_axes=[tree_map(lambda x: 0, x), tree_map(lambda x: 0, y)]
-        )(
-            x,
-            y
-        ),
-        axis=0
-    )
-
-def nn_loss(
-    model: nn.Module,
-    params: PyTree,
-    loss: Callable[[PyTree, PyTree], Array],
-    x: PyTree,
-    y: PyTree
-    ) -> Array:
-    y_hat = model.apply(
-        params,
-        x,
-        method = lambda module, x: module.unstandardised(x)
-    )
-    return loss(y, y_hat)
