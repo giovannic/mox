@@ -43,7 +43,7 @@ def train_surrogate(
     :rtype: nn.Module
     """
     params = variables['params']
-    batch_stats = variables.get('batch_stats')
+    batch_stats = variables.get('batch_stats', {})
 
     if optimiser is None:
         tx = optax.adam(learning_rate=.001)
