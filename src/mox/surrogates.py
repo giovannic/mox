@@ -1,4 +1,4 @@
-from typing import Sequence, List, Tuple, Any, Optional, Union
+from typing import Sequence, List, Tuple, Any, Optional
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 from flax.linen import Module
@@ -43,14 +43,35 @@ class MLP(Module):
 
     units: int
     n_hidden: int
-    n_output: Union[int, Array]
+    n_output: int
+    dropout_rate: float
+    batch_norm: bool
 
     @nn.compact
-    def __call__(self, x):
-        layers = [nn.Dense(self.units) for _ in range(self.n_hidden)]
-        for i, lyr in enumerate(layers):
-            x = lyr(x)
-            x = nn.relu(x)
+    def __call__(self, x, training: bool):
+        denses = [nn.Dense(self.units) for _ in range(self.n_hidden)]
+        dropouts = [
+            nn.Dropout(rate=self.dropout_rate, deterministic=not training)
+            for _ in range(self.n_hidden)
+        ]
+        if self.batch_norm:
+            norms = [
+                nn.BatchNorm(use_running_average=not training)
+                for _ in range(self.n_hidden)
+            ]
+            layers = zip(denses, dropouts, norms)
+            for dense, dropout, norm in layers:
+                x = dense(x)
+                x = norm(x)
+                x = dropout(x)
+                x = nn.relu(x)
+        else:
+            layers = zip(denses, dropouts)
+            for dense, dropout in layers:
+                x = dense(x)
+                x = dropout(x)
+                x = nn.relu(x)
+
         return nn.Dense(self.n_output)(x)
 
 class Vectoriser(Module):
@@ -92,9 +113,6 @@ class Recover(nn.Module):
         ]
         return tree_unflatten(self.y_def, y_leaves)
 
-def _take_leaf(vector: Array, start: int, end: int, shape: tuple):
-    return vector[start:end].reshape(shape)
-
 class Limiter(nn.Module):
     """Limiter. limit outputs using relus"""
 
@@ -132,7 +150,9 @@ class Surrogate(nn.Module):
     y_max: PyTree
     units: int
     n_hidden: int
-    n_output: Union[int, Array]
+    n_output: int
+    dropout_rate: float
+    batch_norm: bool
 
     def setup(self):
         self.vec = Vectoriser()
@@ -143,33 +163,38 @@ class Surrogate(nn.Module):
             self.y_boundaries
         )
         self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
-        self.nn = MLP(self.units, self.n_hidden, self.n_output)
+
+        self.nn = MLP(
+            self.units,
+            self.n_hidden,
+            self.n_output,
+            self.dropout_rate,
+            self.batch_norm
+        )
+
         if self.y_min is not None:
             self.limiter = Limiter(self.y_min, self.y_max)
         else:
             self.limiter = lambda x: x
 
-    def __call__(self, x):
-        y = self.limiter(self.inv_std(self.standardised(x)))
-        return y
-
-    def standardised(self, x):
+    def __call__(self, x, training: bool):
         x = self.std(x)
         x = self.vec(x)
-        y = self.nn(x)
-        y = self.rec(y)
+        y = self.nn(x, training)
+        y = self.limiter(self.inv_std(self.rec(y)))
         return y
 
 def make_surrogate(
         x: list[PyTree],
         y: PyTree,
-        nn: Any=MLP,
         x_std_axis: Optional[PyTree] = None,
         y_std_axis: Optional[PyTree] = None,
         y_min: Optional[Array] = None,
         y_max: Optional[Array] = None,
         units = 256,
-        n_hidden = 3
+        n_hidden = 3,
+        dropout_rate = .5,
+        batch_norm = True
     ) -> nn.Module:
     """make_surrogate.
 
@@ -194,7 +219,9 @@ def make_surrogate(
         y_max,
         units,
         n_hidden,
-        n_output
+        n_output,
+        dropout_rate,
+        batch_norm
     )
 
 def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
@@ -208,7 +235,7 @@ def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
     )
 
 def pytree_init(key, model, x):
-    return model.init(key, tree_map(lambda x: x[0], x))
+    return model.init(key, tree_map(lambda x: x[0], x), training=False)
 
 def _standardise(x, mu, sigma):
     return (x - mu) / sigma

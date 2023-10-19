@@ -90,10 +90,10 @@ def test_vectorisation_works_for_dictionary_parameters():
     assert jnp.array_equal(x_vec, expected_x_vec)
 
 def test_vectorisation_works_for_list_parameters():
-    x_samples = _freeze_attr([[
+    x_samples = [[
         jnp.array([1.0, 2.0]),
         jnp.array([3.0, 4.0])
-    ]])
+    ]]
 
     vec = Vectoriser()
 
@@ -106,10 +106,10 @@ def test_vectorisation_works_for_list_parameters():
 
 def test_output_recovery_works_for_dictionary_output():
     y_vec = jnp.array([1.0, 2.0, 3.0])
-    y_expected = _freeze_attr({
+    y_expected = {
         'output1': jnp.array([1.0]),
         'output2': jnp.array([2.0, 3.0])
-    })
+    }
     y_shapes = [jnp.array([1]), jnp.array([2])]
     rec = Recover(y_shapes, tree_structure(y_expected), jnp.array([1, 3]))
 

@@ -33,7 +33,7 @@ def make_predictive_loss(f: Callable[[PyTree, PyTree], Array]) -> LossSignature:
         return jnp.mean(
             vmap(
                 lambda x, y: standardised_loss(model, params, f, x, y),
-                in_axes=[tree_map(lambda x: 0, x), tree_map(lambda x: 0, y)]
+                in_axes=[tree_map(lambda _: 0, x), tree_map(lambda _: 0, y)]
             )(
                 x,
                 y
@@ -51,7 +51,7 @@ def make_regularised_predictive_loss(
         return jnp.mean(
             vmap(
                 lambda x, y: standardised_loss(model, params, f, x, y),
-                in_axes=[tree_map(lambda x: 0, x), tree_map(lambda x: 0, y)]
+                in_axes=[tree_map(lambda _: 0, x), tree_map(lambda _: 0, y)]
             )(
                 x,
                 y

@@ -1,39 +1,30 @@
-from mox.training import batch_tree
-from jax import numpy as jnp
+from mox.training import train_surrogate
+from mox.surrogates import make_surrogate, pytree_init
+from mox.loss import mse
+from jax import numpy as jnp, random
 from utils import assert_tree_equal
-from jax import jit
-from mox.loss import l2_loss
+from flax.linen.module import _freeze_attr
 
-def test_batch_tree_with_divisible_samples():
-    samples = {
-        'param1': jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]),
-        'param2': jnp.array([[9.0, 10.0], [11.0, 12.0], [13.0, 14.0], [15.0, 16.0]])
-    }
-    batch_size = 2
-
-    batched_samples = batch_tree(samples, batch_size)
-
-    assert len(batched_samples) == 2
-    assert_tree_equal(batched_samples[0], {
-        'param1': jnp.array([[1.0, 2.0], [3.0, 4.0]]),
-        'param2': jnp.array([[9.0, 10.0], [11.0, 12.0]])
-    })
-    assert_tree_equal(batched_samples[1], {
-        'param1': jnp.array([[5.0, 6.0], [7.0, 8.0]]),
-        'param2': jnp.array([[13.0, 14.0], [15.0, 16.0]])
-    })
-
-def test_l2_loss_calculates_penalty_correctly():
-    params = {
-        'params': {
-            'nn': {
-                'Dense_0': {
-                    'bias': jnp.full((10,), 3.),
-                    'kernel': jnp.full((10,), 2.)
-                }
-            }
+def test_training_with_batch_norm_and_dropout():
+    x = _freeze_attr([{
+        'param1': jnp.array([1.0, 2.0, 3.0, 4.0]),
+        'param2': {
+            'subparam1': jnp.array([5.0, 6.0, 7.0, 8.0]),
+            'subparam2': jnp.array([8.0, 9.0, 10.0, 11.0])
         }
-    }
-
-    loss = jit(l2_loss)(params, 0.01)
-    assert loss == 0.01 * 2.**2 
+    }])
+    y = [jnp.array([1.0, -1.0, 3.0, -3.0])]
+    key = random.PRNGKey(42)
+    model = make_surrogate(x, y)
+    variables = pytree_init(key, model, x)
+    state = train_surrogate(
+        x,
+        y,
+        model,
+        mse,
+        key,
+        variables,
+        batch_size=2,
+        epochs=1
+    )
+    assert state.batch_stats is not None
