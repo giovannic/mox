@@ -1,38 +1,32 @@
 # Adapted from flax seq2seq examples:
 # https://github.com/google/flax/blob/main/examples/seq2seq/
 
-from typing import Tuple, Optional, List, Union
+from typing import Tuple, Optional, List, Any
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 from jax.random import KeyArray
 import jax.numpy as jnp
-from jax.tree_util import tree_leaves, tree_structure, tree_map
-from jax import vmap
-
-from ..surrogates import (
-    Vectoriser,
-    Standardiser,
-    InverseStandardiser,
-    Limiter,
-    summary,
-    safe_summary
+from jax.tree_util import (
+    tree_leaves,
+    tree_structure,
+    tree_map,
+    tree_unflatten
 )
 
-from .encoding import FillEncoding, filler
-from .surrogates import RecoverSeq
+from ..surrogates import (
+    summary,
+    safe_summary,
+    minrelu,
+    maxrelu,
+    _standardise,
+    _inverse_standardise
+)
+
+from ..utils import tree_to_vector
 
 PRNGKey = KeyArray
 LSTMCarry = Tuple[Array, Array]
 SeqInput = Tuple[List[PyTree], List[PyTree]]
-
-class SequenceVectoriser(nn.Module):
-
-    @nn.compact
-    def __call__(self, x: PyTree):
-        return jnp.concatenate([
-            x.reshape(x.shape[:2] + (-1,))
-            for x in tree_leaves(x)
-        ], axis=2)
 
 class DecoderLSTMCell(nn.RNNCellBase):
     """DecoderLSTM Module wrapped in a lifted scan transform.
@@ -69,6 +63,7 @@ class RNNSurrogate(nn.Module):
     x_seq_mean: PyTree
     x_seq_std: PyTree
     filler_pattern: Array
+    y_def: PyTree
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
@@ -76,59 +71,55 @@ class RNNSurrogate(nn.Module):
     y_min: PyTree
     y_max: PyTree
     units: int
-    n_output: Union[int, Array]
+    n_output: int
 
     def setup(self):
-        # static encoding
-        self.std = Standardiser(self.x_mean, self.x_std)
-        self.vec = Vectoriser()
-
         # sequence translation
-        self.std_seq = Standardiser(self.x_seq_mean, self.x_seq_std)
-        self.vec_seq = SequenceVectoriser()
-        self.filler = FillEncoding(self.filler_pattern, self.n_steps)
         self.rnn = nn.RNN(DecoderLSTMCell(self.units, self.n_output))
 
-        # post prediction recovery
-        self.rec = RecoverSeq(
-            self.y_shapes,
-            tree_structure(self.y_mean),
-            self.y_boundaries
-        )
-        self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
-        if self.y_min is not None:
-            self.limiter = Limiter(self.y_min, self.y_max)
-        else:
-            self.limiter = lambda x: x
+    def __call__(self, x: SeqInput) -> Array:
+        x_vec = self.vectorise(x)
+        y = self.rnn(x_vec)
+        return self.recover(y)
 
-    def __call__(self, x_in: SeqInput):
-        y = self.limiter(self.inv_std(self.unstandardised(x_in)))
-        return y
+    def vectorise(self, x: SeqInput) -> Array:
+        x_static, x_seq = x
+        # standardise
+        x_static = tree_map(_standardise, x_static, self.x_mean, self.x_std)
+        x_seq = tree_map(_standardise, x_seq, self.x_seq_mean, self.x_seq_std)
 
-    def unstandardised(self, x_in:SeqInput):
-        x, x_seq = x_in
-        # encode static
-        x = self.std(x)
-        x_vec = vmap(self.vec, in_axes=[tree_map(lambda _: 0, x)])(x)
+        # fill sequence
+        x_seq = _fill(x_seq, self.filler_pattern, self.n_steps)
 
-        # encode sequence
-        x_seq = self.std_seq(x_seq)
-        x_seq = tree_map(
-            lambda leaf: vmap(self.filler)(leaf),
-            x_seq
-        )
-        x_seq_vec = self.vec_seq(x_seq)
+        # vectorise
+        x_static = tree_to_vector(x_static)
+        x_seq = _vectorise_sequence(x_seq)
 
-        # jointly decode sequence
         x_rep = jnp.repeat(
-            x_vec[:, jnp.newaxis, :],
+            x_static[:, jnp.newaxis, :],
             self.n_steps,
             axis=1
         )
-        x_joint = jnp.concatenate([x_rep, x_seq_vec], axis=2)
-        y = self.rnn(x_joint)
-        y = vmap(self.rec, in_axes=[0, None])(y, self.n_steps)
-        return y
+        return jnp.concatenate([x_rep, x_seq], axis=2)
+
+    def recover(self, y: Any) -> PyTree:
+        y = tree_map(_inverse_standardise, y, self.y_mean, self.y_std)
+        y_tree = _recover_sequence(
+            y,
+            self.y_shapes,
+            self.y_def,
+            self.y_boundaries,
+            self.n_steps
+        )
+
+        # limit outputs
+        y_tree = tree_map(
+            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
+            y,
+            self.y_min,
+            self.y_max
+        )
+        return y_tree
 
 def make_rnn_surrogate(
     x: list[PyTree],
@@ -159,7 +150,8 @@ def make_rnn_surrogate(
         x_std,
         x_seq_mean,
         x_seq_std,
-        filler(x_t, n_steps),
+        _filler(x_t, n_steps),
+        tree_structure(y_mean),
         y_shapes,
         y_boundaries,
         y_mean,
@@ -169,3 +161,29 @@ def make_rnn_surrogate(
         units,
         n_output
     )
+
+def _vectorise_sequence(x: PyTree) -> Array:
+    return jnp.concatenate([
+        x.reshape(x.shape[:2] + (-1,))
+        for x in tree_leaves(x)
+    ], axis=2)
+
+def _recover_sequence(
+    y: Array,
+    y_shapes: List[Tuple],
+    y_def: PyTree,
+    y_boundaries: Tuple,
+    n_steps: Array
+    ) -> PyTree:
+    y_leaves = [
+        leaf.reshape(y.shape[:1] + shape)[:n_steps]
+        for leaf, shape in 
+        zip(jnp.split(y, y_boundaries[:-1], axis=1), y_shapes)
+    ]
+    return tree_unflatten(y_def, y_leaves)
+
+def _filler(t, max_t):
+    return jnp.diff(jnp.append(t, max_t))
+
+def _fill(x: Array, pattern: Array, steps: Array):
+    return jnp.repeat(x, pattern, axis=0)[:steps]
