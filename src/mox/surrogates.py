@@ -1,4 +1,4 @@
-from typing import Sequence, List, Tuple, Any, Optional
+from typing import List, Tuple, Optional
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 from flax.linen import Module
@@ -11,32 +11,6 @@ from jax.tree_util import (
 )
 from .utils import tree_to_vector
 from functools import partial
-
-def minrelu(x: Array, min_x: Array) -> Array:
-    """minrelu.
-
-    relu with a min input
-
-    :param x: input array
-    :type x: Array
-    :param min_x: minimum value
-    :type min_x: Array
-    :rtype: Array
-    """
-    return jnp.maximum(x, min_x)
-
-def maxrelu(x: Array, max_x: Array) -> Array:
-    """minrelu.
-
-    relu with a max input
-
-    :param x: input array
-    :type x: Array
-    :param max_x: maximum value
-    :type max_x: Array
-    :rtype: Array
-    """
-    return jnp.minimum(x, max_x)
 
 class MLP(Module):
     """MLP. A multi layer perceptron
@@ -75,60 +49,6 @@ class MLP(Module):
 
         return nn.Dense(self.n_output)(x)
 
-class Vectoriser(Module):
-
-    @nn.compact
-    def __call__(self, x):
-        return tree_to_vector(x)
-
-class Standardiser(nn.Module):
-
-    x_mean: Sequence[PyTree]
-    x_std: Sequence[PyTree]
-
-    @nn.compact
-    def __call__(self, x):
-        return tree_map(_standardise, x, self.x_mean, self.x_std)
-
-class InverseStandardiser(nn.Module):
-
-    x_mean: PyTree
-    x_std: PyTree
-
-    @nn.compact
-    def __call__(self, x):
-        return tree_map(_inverse_standardise, x, self.x_mean, self.x_std)
-
-class Recover(nn.Module):
-    """Recover. Recover output PyTree from vectorised neural net output"""
-
-    y_shapes: List[Tuple]
-    y_def: Any
-    y_boundaries: Tuple
-
-    def __call__(self, y):
-        y_leaves = [
-            leaf.reshape(shape)
-            for leaf, shape in 
-            zip(jnp.split(y, self.y_boundaries), self.y_shapes)
-        ]
-        return tree_unflatten(self.y_def, y_leaves)
-
-class Limiter(nn.Module):
-    """Limiter. limit outputs using relus"""
-
-    y_min: PyTree
-    y_max: PyTree
-
-    @nn.compact
-    def __call__(self, y):
-        return tree_map(
-            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
-            y,
-            self.y_min,
-            self.y_max
-        )
-
 class Surrogate(nn.Module):
     """Surrogate module.
 
@@ -143,6 +63,7 @@ class Surrogate(nn.Module):
 
     x_mean: PyTree
     x_std: PyTree
+    y_def: PyTree
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
@@ -156,15 +77,6 @@ class Surrogate(nn.Module):
     batch_norm: bool
 
     def setup(self):
-        self.vec = Vectoriser()
-        self.std = Standardiser(self.x_mean, self.x_std)
-        self.rec = Recover(
-            self.y_shapes,
-            tree_structure(self.y_mean),
-            self.y_boundaries
-        )
-        self.inv_std = InverseStandardiser(self.y_mean, self.y_std)
-
         self.nn = MLP(
             self.units,
             self.n_hidden,
@@ -173,16 +85,35 @@ class Surrogate(nn.Module):
             self.batch_norm
         )
 
-        if self.y_min is not None:
-            self.limiter = Limiter(self.y_min, self.y_max)
-        else:
-            self.limiter = lambda x: x
+    def __call__(self, x, training: bool) -> Array:
+        x = self.vectorise(x)
 
-    def __call__(self, x, training: bool):
-        x = self.std(x)
-        x = self.vec(x)
+        # predict output
         y = self.nn(x, training)
-        y = self.limiter(self.inv_std(self.rec(y)))
+        return self.recover(y)
+
+    def vectorise(self, x) -> Array:
+        # standardise
+        x = tree_map(_standardise, x, self.x_mean, self.x_std)
+
+        # vectorise
+        x = tree_to_vector(x)
+        return x
+
+    def recover(self, y) -> PyTree:
+        # recover structure
+        y = _recover(y, self.y_boundaries, self.y_shapes, self.y_def)
+
+        # inverse standardise
+        y = tree_map(_inverse_standardise, y, self.y_mean, self.y_std)
+
+        # limit outputs
+        y = tree_map(
+            lambda y, y_min, y_max: maxrelu(minrelu(y, y_min), y_max),
+            y,
+            self.y_min,
+            self.y_max
+        )
         return y
 
 def make_surrogate(
@@ -212,6 +143,7 @@ def make_surrogate(
     return Surrogate(
         x_mean,
         x_std,
+        tree_structure(x_mean),
         y_shapes,
         y_boundaries,
         y_mean,
@@ -248,3 +180,37 @@ def _standardise(x, mu, sigma):
 
 def _inverse_standardise(x, mu, sigma):
     return x * sigma + mu
+
+def _recover(y, y_boundaries, y_shapes, y_def):
+    y_leaves = [
+        leaf.reshape(shape)
+        for leaf, shape in 
+        zip(jnp.split(y, y_boundaries), y_shapes)
+    ]
+    return tree_unflatten(y_def, y_leaves)
+
+def minrelu(x: Array, min_x: Array) -> Array:
+    """minrelu.
+
+    relu with a min input
+
+    :param x: input array
+    :type x: Array
+    :param min_x: minimum value
+    :type min_x: Array
+    :rtype: Array
+    """
+    return jnp.maximum(x, min_x)
+
+def maxrelu(x: Array, max_x: Array) -> Array:
+    """minrelu.
+
+    relu with a max input
+
+    :param x: input array
+    :type x: Array
+    :param max_x: maximum value
+    :type max_x: Array
+    :rtype: Array
+    """
+    return jnp.minimum(x, max_x)
