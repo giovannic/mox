@@ -1,23 +1,21 @@
 import optax
 from jaxtyping import Array, PyTree
-from flax import linen as nn
 from flax.linen.module import _freeze_attr
+from flax.training import train_state
 from typing import Callable, Any
-from jax import jit, value_and_grad, random
+from jax import jit, value_and_grad, random, vmap, numpy as jnp
 from jax.tree_util import tree_map
-from .rnn import SeqInput
-from ..training import training_loss, batch_tree
-from ..surrogates import _standardise
+from .rnn import SeqInput, RNNSurrogate
 
-def train_seq2seq_surrogate(
+def train_rnn_surrogate(
         x_in: SeqInput,
         y: PyTree,
-        model: nn.Module,
+        model: RNNSurrogate,
         params: PyTree,
-        loss: Callable[[Array, Array], Array],
+        loss_fn: Callable[[PyTree, PyTree], Array],
         key: Any,
         epochs: int = 100,
-        n_batches: int = 100,
+        batch_size: int = 100,
         optimiser: Any = None
     ) -> PyTree:
     """train_seq2seq_surrogate.
@@ -28,38 +26,47 @@ def train_seq2seq_surrogate(
         tx = optax.adam(learning_rate=.001)
     else:
         tx = optimiser
-    opt_state = tx.init(params)
 
-    # standardise y for the loss function
-    y = tree_map(_standardise, y, model.y_mean, model.y_std)
+    # standardise x and y
+    x = vmap(model.vectorise, in_axes=[tree_map(lambda _: 0, x_in)])(x_in)
+    y = vmap(model.vectorise_output, in_axes=[tree_map(lambda _: 0, y)])(y)
 
-    # batch the inputs
-    x, x_seq = x_in
-    x_batched = batch_tree(x, n_batches)
-    x_seq_batched = batch_tree(x_seq, n_batches)
-    y_batched = batch_tree(y, n_batches)
+    batches = [
+        { 'input': i, 'output': j }
+        for i, j
+        in zip(jnp.split(x, batch_size), jnp.split(y, batch_size))
+    ]
 
-    loss_grad_fn = value_and_grad(jit(
-        lambda p, x, x_seq, y: training_loss(
-            model,
-            p,
-            loss,
-            (x, x_seq),
-            y
-        )
-    ))
+    n_batches = len(batches)
 
-    for i in range(epochs):
+    state = train_state.TrainState.create(
+        apply_fn=model.net.apply,
+        params=params,
+        tx=tx
+    )
+
+    @jit
+    def train_step(state: train_state.TrainState, batch):
+        def apply_loss(params):
+            estimate = state.apply_fn(
+                {
+                    'params': params,
+                },
+                batch['input'],
+            )
+            loss = loss_fn(estimate, batch['output'])
+            return loss
+
+        grad_fn = value_and_grad(apply_loss, has_aux=True)
+        loss, grads = grad_fn(state.params)
+        state = state.apply_gradients(grads=grads)
+        metrics = { 'loss': loss }
+        return state, metrics
+
+    for _ in range(epochs):
         key, key_i = random.split(key)
 
         for b in random.permutation(key_i, n_batches, independent=True):
-            loss_val, grads = loss_grad_fn(
-                params,
-                x_batched[b],
-                x_seq_batched[b],
-                y_batched[b]
-            )
-            updates, opt_state = tx.update(grads, opt_state)
-            params = optax.apply_updates(params, updates)
+            state, _ = train_step(state, batches[b])
 
-    return params
+    return state

@@ -3,6 +3,7 @@ from jaxtyping import Array, PyTree
 from flax import linen as nn
 from flax.linen import Module
 import jax.numpy as jnp
+from jax import lax
 from jax.tree_util import (
     tree_map,
     tree_structure,
@@ -62,12 +63,12 @@ class Surrogate(nn.Module):
     """
 
     x_mean: PyTree
-    x_std: PyTree
+    x_var: PyTree
     y_def: PyTree
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
-    y_std: PyTree
+    y_var: PyTree
     y_min: PyTree
     y_max: PyTree
     units: int
@@ -94,7 +95,7 @@ class Surrogate(nn.Module):
 
     def vectorise(self, x) -> Array:
         # standardise
-        x = tree_map(_standardise, x, self.x_mean, self.x_std)
+        x = tree_map(_standardise, x, self.x_mean, self.x_var)
 
         # vectorise
         x = tree_to_vector(x)
@@ -105,7 +106,7 @@ class Surrogate(nn.Module):
         y = _recover(y, self.y_boundaries, self.y_shapes, self.y_def)
 
         # inverse standardise
-        y = tree_map(_inverse_standardise, y, self.y_mean, self.y_std)
+        y = tree_map(_inverse_standardise, y, self.y_mean, self.y_var)
 
         # limit outputs
         y = tree_map(
@@ -119,8 +120,8 @@ class Surrogate(nn.Module):
 def make_surrogate(
         x: list[PyTree],
         y: PyTree,
-        x_std_axis: Optional[PyTree] = None,
-        y_std_axis: Optional[PyTree] = None,
+        x_var_axis: Optional[PyTree] = None,
+        y_var_axis: Optional[PyTree] = None,
         y_min: Optional[Array] = None,
         y_max: Optional[Array] = None,
         units = 256,
@@ -132,8 +133,8 @@ def make_surrogate(
 
     Make a surrogate model from a function samples
     """
-    x_mean, x_std = safe_summary(summary(x, x_std_axis))
-    y_mean, y_std = safe_summary(summary(y, y_std_axis))
+    x_mean, x_var = safe_summary(summary(x, x_var_axis))
+    y_mean, y_var = safe_summary(summary(y, y_var_axis))
     y_shapes = [leaf.shape[1:] for leaf in tree_leaves(y)]
     y_boundaries = tuple([
         int(i) for i in
@@ -142,12 +143,12 @@ def make_surrogate(
     n_output = y_boundaries[-1]
     return Surrogate(
         x_mean,
-        x_std,
+        x_var,
         tree_structure(x_mean),
         y_shapes,
         y_boundaries,
         y_mean,
-        y_std,
+        y_var,
         y_min,
         y_max,
         units,
@@ -158,15 +159,17 @@ def make_surrogate(
     )
 
 def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
+    """ return mean and variance of a PyTree of samples """
     mean = partial(jnp.mean, keepdims=True)
-    std = partial(jnp.std, keepdims=True)
 
     if axis is None:
-        return (tree_map(mean, samples), tree_map(std, samples))
+        sample_mean = tree_map(mean, samples)
+        return (sample_mean, tree_map(_var, samples, sample_mean))
 
+    sample_mean = tree_map(mean, samples, axis)
     return (
-        tree_map(mean, samples, axis),
-        tree_map(std, samples, axis)
+        sample_mean,
+        tree_map(_var, samples, sample_mean, axis)
     )
 
 def safe_summary(x: Tuple[PyTree, PyTree]) -> Tuple[PyTree, PyTree]:
@@ -175,11 +178,14 @@ def safe_summary(x: Tuple[PyTree, PyTree]) -> Tuple[PyTree, PyTree]:
 def pytree_init(key, model, x):
     return model.init(key, tree_map(lambda x: x[0], x), training=False)
 
-def _standardise(x, mu, sigma):
-    return (x - mu) / sigma
+def _var(x, mean, axis=None):
+    return jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
 
-def _inverse_standardise(x, mu, sigma):
-    return x * sigma + mu
+def _standardise(x, mu, var):
+    return jnp.subtract(x, mu) * lax.rsqrt(var)
+
+def _inverse_standardise(x, mu, var):
+    return x * lax.sqrt(var) + mu
 
 def _recover(y, y_boundaries, y_shapes, y_def):
     y_leaves = [

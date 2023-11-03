@@ -19,17 +19,6 @@ from .surrogates import _standardise
 class TrainState(train_state.TrainState):
     batch_stats: Any
 
-def batch_tree(tree: PyTree, n_batches: int) -> list[PyTree]:
-    flattened, treedef = tree_flatten(tree)
-    batched = [
-        jnp.split(leaf, n_batches)
-        for leaf in flattened
-    ]
-    return [
-        tree_unflatten(treedef, batch)
-        for batch in zip(*batched)
-    ]
-
 def batched_training_loss(
     model: nn.Module,
     params: PyTree,
@@ -40,7 +29,7 @@ def batched_training_loss(
     return jnp.mean(
         vmap(
             lambda x, y: training_loss(model, params, loss, x, y),
-            in_axes=[tree_map(lambda x: 0, x), tree_map(lambda x: 0, y)]
+            in_axes=[tree_map(lambda _: 0, x), tree_map(lambda _: 0, y)]
         )(
             x,
             y
@@ -111,7 +100,8 @@ def train_surrogate(
         for i, j
         in zip(jnp.split(x_vec, batch_size), jnp.split(y_vec, batch_size))
     ]
-    n_batches = len(x)
+
+    n_batches = len(batches)
 
     state = TrainState.create(
         apply_fn=model.apply,
