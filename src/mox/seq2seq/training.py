@@ -1,6 +1,5 @@
 import optax
 from jaxtyping import Array, PyTree
-from flax.linen.module import _freeze_attr
 from flax.training import train_state
 from typing import Callable, Any
 from jax import jit, value_and_grad, random, vmap, numpy as jnp
@@ -20,8 +19,6 @@ def train_rnn_surrogate(
     ) -> PyTree:
     """train_seq2seq_surrogate.
     """
-    x_in = _freeze_attr(x_in)
-
     if optimiser is None:
         tx = optax.adam(learning_rate=.001)
     else:

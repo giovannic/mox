@@ -2,7 +2,6 @@ from mox.training import train_surrogate
 from mox.surrogates import make_surrogate, pytree_init
 from mox.loss import mse
 from jax import numpy as jnp, random
-from utils import assert_tree_equal
 from flax.linen.module import _freeze_attr
 
 def test_training_with_batch_norm_and_dropout():

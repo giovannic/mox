@@ -1,6 +1,5 @@
 import jax.numpy as jnp
 from jax import random, vmap
-from flax.linen.module import _freeze_attr
 from jax.tree_util import tree_structure, tree_leaves, tree_map
 from mox.seq2seq.rnn import (
     make_rnn_surrogate,
@@ -63,19 +62,19 @@ def test_output_recovery_works_for_list_of_timeseries():
     assert_tree_equal(y, y_expected)
 
 def test_surrogate_can_vectorise_an_input_pair():
-    x = _freeze_attr([{
+    x = [{
         'gamma': jnp.array([1, 2]),
         'inf': jnp.array([3, 4])
-    }])
+    }]
 
-    x_seq = _freeze_attr([{
+    x_seq = [{
         'beta': jnp.array([[[1.], [2.]], [[1.], [2.]]]),
         'ages': jnp.array([[[0.], [2.]], [[0.], [2.]]]),
-    }])
+    }]
 
     x_t = jnp.arange(2)
 
-    y = _freeze_attr([jnp.arange(20).reshape((2, 2, 5))])
+    y = [jnp.arange(20).reshape((2, 2, 5))]
 
     n_steps = jnp.array(2)
     model = make_rnn_surrogate(
@@ -99,22 +98,22 @@ def test_surrogate_can_vectorise_an_input_pair():
     assert jnp.array_equal(x_vec, x_expected)
 
 def test_surrogate_vectorise_output_and_recover_are_consistent():
-    x = _freeze_attr([{
+    x = [{
         'gamma': jnp.array([1, 2]),
         'inf': jnp.array([3, 4])
-    }])
+    }]
 
-    x_seq = _freeze_attr([{
+    x_seq = [{
         'beta': jnp.array([[[0.], [2.]], [[1.], [3.]]]),
         'ages': jnp.array([[[0.], [2.]], [[1.], [3.]]]) + 1.,
-    }])
+    }]
 
     x_t = jnp.arange(2)
 
-    y_expected = _freeze_attr([{
+    y_expected = [{
         'inc': jnp.array([[[0.], [2.]], [[1.], [3.]]]),
         'prev': jnp.array([[[0.], [2.]], [[1.], [3.]]]) + 1.
-    }])
+    }]
 
     n_steps = jnp.array(2)
     model = make_rnn_surrogate(
@@ -134,19 +133,19 @@ def test_surrogate_vectorise_output_and_recover_are_consistent():
     assert_tree_equal(y, y_expected, 1e-5)
 
 def test_e2e_timeseries():
-    x = _freeze_attr([{
+    x = [{
         'gamma': jnp.array([1, 2]),
         'inf': jnp.array([3, 4])
-    }])
+    }]
 
-    x_seq = _freeze_attr([{
+    x_seq = [{
         'beta': jnp.arange(10).reshape(2, 5, 1),
         'ages': jnp.repeat(jnp.arange(6).reshape((2, 1, 3)), 5, axis=1),
-    }])
+    }]
 
     x_t = jnp.arange(5) * 2
 
-    y = _freeze_attr([jnp.arange(80).reshape((2, 8, 5))])
+    y = [jnp.arange(80).reshape((2, 8, 5))]
 
     n_steps = jnp.max(x_t)
     model = make_rnn_surrogate(x, x_seq, x_t, n_steps, y)
