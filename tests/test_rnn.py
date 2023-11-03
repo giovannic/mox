@@ -100,20 +100,20 @@ def test_surrogate_can_vectorise_an_input_pair():
 
 def test_surrogate_vectorise_output_and_recover_are_consistent():
     x = _freeze_attr([{
-        'gamma': jnp.array([1, 2], dtype=jnp.float64),
-        'inf': jnp.array([3, 4], dtype=jnp.float64)
+        'gamma': jnp.array([1, 2]),
+        'inf': jnp.array([3, 4])
     }])
 
     x_seq = _freeze_attr([{
-        'beta': jnp.array([[[0.], [2.]], [[1.], [3.]]], dtype=jnp.float64),
-        'ages': jnp.array([[[0.], [2.]], [[1.], [3.]]], dtype=jnp.float64) + 1.,
+        'beta': jnp.array([[[0.], [2.]], [[1.], [3.]]]),
+        'ages': jnp.array([[[0.], [2.]], [[1.], [3.]]]) + 1.,
     }])
 
     x_t = jnp.arange(2)
 
     y_expected = _freeze_attr([{
-        'inc': jnp.array([[[0.], [2.]], [[1.], [3.]]], dtype=jnp.float64),
-        'prev': jnp.array([[[0.], [2.]], [[1.], [3.]]], dtype=jnp.float64) + 1.
+        'inc': jnp.array([[[0.], [2.]], [[1.], [3.]]]),
+        'prev': jnp.array([[[0.], [2.]], [[1.], [3.]]]) + 1.
     }])
 
     n_steps = jnp.array(2)
@@ -146,7 +146,7 @@ def test_e2e_timeseries():
 
     x_t = jnp.arange(5) * 2
 
-    y = _freeze_attr([jnp.arange(50).reshape((2, 5, 5))])
+    y = _freeze_attr([jnp.arange(80).reshape((2, 8, 5))])
 
     n_steps = jnp.max(x_t)
     model = make_rnn_surrogate(x, x_seq, x_t, n_steps, y)
@@ -155,7 +155,7 @@ def test_e2e_timeseries():
     params = init_surrogate(key, model, x_in)
     y_hat = apply_surrogate(model, params, x_in)
     assert params is not None
-    assert y_hat[0].shape == (2, 5, 5)
+    assert y_hat[0].shape == (2, 8, 5)
     params = train_rnn_surrogate(
         x_in,
         y,

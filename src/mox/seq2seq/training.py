@@ -46,18 +46,16 @@ def train_rnn_surrogate(
     )
 
     @jit
-    def train_step(state: train_state.TrainState, batch):
+    def train_step(state: train_state.TrainState, batch: PyTree):
         def apply_loss(params):
             estimate = state.apply_fn(
-                {
-                    'params': params,
-                },
+                params,
                 batch['input'],
             )
             loss = loss_fn(estimate, batch['output'])
             return loss
 
-        grad_fn = value_and_grad(apply_loss, has_aux=True)
+        grad_fn = value_and_grad(apply_loss)
         loss, grads = grad_fn(state.params)
         state = state.apply_gradients(grads=grads)
         metrics = { 'loss': loss }

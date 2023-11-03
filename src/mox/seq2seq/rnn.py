@@ -4,7 +4,6 @@ from typing import Tuple, Optional, List, Any
 from jaxtyping import Array, PyTree
 from jax import vmap
 from flax import linen as nn
-from jax.random import KeyArray
 import jax.numpy as jnp
 from jax.tree_util import (
     tree_leaves,
@@ -30,7 +29,7 @@ from ..utils import (
 
 from dataclasses import dataclass
 
-PRNGKey = KeyArray
+PRNGKey = Array
 LSTMCarry = Tuple[Array, Array]
 SeqInput = Tuple[List[PyTree], List[PyTree]]
 
@@ -119,7 +118,9 @@ class RNNSurrogate():
             self.y_boundaries,
             self.n_steps
         )
-        y = unbatch_tree(tree_map(_inverse_standardise, y, self.y_mean, self.y_var))
+        y = unbatch_tree(
+            tree_map(_inverse_standardise, y, self.y_mean, self.y_var)
+        )
 
         # limit outputs
         if self.y_min is not None:

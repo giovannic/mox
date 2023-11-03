@@ -209,7 +209,7 @@ def minrelu(x: Array, min_x: Array) -> Array:
     return jnp.maximum(x, min_x)
 
 def maxrelu(x: Array, max_x: Array) -> Array:
-    """minrelu.
+    """maxrelu.
 
     relu with a max input
 
