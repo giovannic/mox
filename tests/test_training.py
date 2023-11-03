@@ -1,5 +1,5 @@
 from mox.training import train_surrogate
-from mox.surrogates import make_surrogate, pytree_init
+from mox.surrogates import make_surrogate, init_surrogate
 from mox.loss import mse
 from jax import numpy as jnp, random
 from flax.linen.module import _freeze_attr
@@ -15,7 +15,7 @@ def test_training_with_batch_norm_and_dropout():
     y = [jnp.array([1.0, -1.0, 3.0, -3.0])]
     key = random.PRNGKey(42)
     model = make_surrogate(x, y)
-    variables = pytree_init(key, model, x)
+    variables = init_surrogate(key, model, x)
     state = train_surrogate(
         x,
         y,
@@ -43,7 +43,7 @@ def test_training_wo_batch_norm():
         y,
         batch_norm=False
     )
-    variables = pytree_init(key, model, x)
+    variables = init_surrogate(key, model, x)
     state = train_surrogate(
         x,
         y,

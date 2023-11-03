@@ -2,9 +2,8 @@
 # https://github.com/google/flax/blob/main/examples/seq2seq/
 from typing import Tuple, Optional, List, Any
 from jaxtyping import Array, PyTree
-from jax import vmap
 from flax import linen as nn
-import jax.numpy as jnp
+from jax import numpy as jnp, vmap
 from jax.tree_util import (
     tree_leaves,
     tree_structure,
@@ -21,11 +20,7 @@ from ..surrogates import (
     _inverse_standardise
 )
 
-from ..utils import (
-    tree_to_vector,
-    tree_leading_axes as tla,
-    unbatch_tree
-)
+from ..utils import tree_to_vector, unbatch_tree, tree_leading_axes as tla
 
 from dataclasses import dataclass
 
@@ -212,6 +207,12 @@ def _filler(t, max_t):
 def _fill(x: Array, pattern: Array, steps: Array):
     return jnp.repeat(x, pattern, axis=0)[:steps]
 
+def default_aggregation_axes(x: PyTree) -> PyTree:
+    """
+    For a given sequential pytree, return the axes to aggregate over
+    """
+    return tree_map(lambda _: (0, 1), x)
+
 def init_surrogate(key, surrogate: RNNSurrogate, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
     return surrogate.net.init(key, x_vec)
@@ -220,9 +221,3 @@ def apply_surrogate(surrogate: RNNSurrogate, params: PyTree, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
     y = surrogate.net.apply(params, x_vec)
     return vmap(surrogate.recover)(y)
-
-def default_aggregation_axes(x: PyTree) -> PyTree:
-    """
-    For a given sequential pytree, return the axes to aggregate over
-    """
-    return tree_map(lambda _: (0, 1), x)

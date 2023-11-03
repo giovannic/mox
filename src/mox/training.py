@@ -6,8 +6,8 @@ from jaxtyping import PyTree, Array
 from typing import Any, Callable
 from flax import linen as nn
 from flax.training import train_state
-from .utils import tree_to_vector
-from .surrogates import _standardise
+from .utils import tree_leading_axes as tla
+from .surrogates import Surrogate
 
 # TODO:
 # * Update train_surrogate documentation
@@ -54,7 +54,7 @@ def training_loss(
 def train_surrogate(
         x: list[PyTree],
         y: PyTree,
-        model: nn.Module,
+        model: Surrogate,
         loss_fn: Callable[[PyTree, PyTree], Array],
         key: Any,
         variables: PyTree,
@@ -83,17 +83,8 @@ def train_surrogate(
         tx = optimiser
 
     # standardise x and y
-    x = tree_map(_standardise, x, model.x_mean, model.x_std)
-    y = tree_map(_standardise, y, model.y_mean, model.y_std)
-
-    x_vec = vmap(
-        tree_to_vector,
-        in_axes=[tree_map(lambda _: 0, x)]
-    )(x)
-    y_vec = vmap(
-        tree_to_vector,
-        in_axes=[tree_map(lambda _: 0, y)]
-    )(y)
+    x_vec = vmap(model.vectorise, in_axes=[tla(x)])(x)
+    y_vec = vmap(model.vectorise_output, in_axes=[tla(y)])(y)
 
     batches = [
         { 'input': i, 'output': j }
@@ -104,7 +95,7 @@ def train_surrogate(
     n_batches = len(batches)
 
     state = TrainState.create(
-        apply_fn=model.apply,
+        apply_fn=model.net.apply,
         params=params,
         batch_stats=batch_stats,
         tx=tx
@@ -121,9 +112,9 @@ def train_surrogate(
                     'batch_stats': state.batch_stats
                 },
                 batch['input'],
+                True,
                 rngs={ 'dropout': dropout_key },
-                mutable=['batch_stats'],
-                method=lambda module, x: module.nn(x, True)
+                mutable=['batch_stats']
             )
             loss = loss_fn(estimate, batch['output'])
             return loss, updates

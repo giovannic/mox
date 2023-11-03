@@ -3,8 +3,8 @@ from jaxtyping import Array, PyTree
 from flax.training import train_state
 from typing import Callable, Any
 from jax import jit, value_and_grad, random, vmap, numpy as jnp
-from jax.tree_util import tree_map
 from .rnn import SeqInput, RNNSurrogate
+from ..utils import tree_leading_axes as tla
 
 def train_rnn_surrogate(
         x_in: SeqInput,
@@ -17,7 +17,17 @@ def train_rnn_surrogate(
         batch_size: int = 100,
         optimiser: Any = None
     ) -> PyTree:
-    """train_seq2seq_surrogate.
+    """train_seq2seq_surrogate
+
+    :param x_in: Input data, a tuple of static and sequential data
+    :param y: Output data (sequential)
+    :param model: Surrogate model
+    :param params: Model parameters
+    :param loss_fn: Loss function
+    :param key: Random key
+    :param epochs: Number of epochs to train for
+    :param batch_size: Batch size
+    :param optimiser: Optimiser to use, if None, Adam is used
     """
     if optimiser is None:
         tx = optax.adam(learning_rate=.001)
@@ -25,8 +35,8 @@ def train_rnn_surrogate(
         tx = optimiser
 
     # standardise x and y
-    x = vmap(model.vectorise, in_axes=[tree_map(lambda _: 0, x_in)])(x_in)
-    y = vmap(model.vectorise_output, in_axes=[tree_map(lambda _: 0, y)])(y)
+    x = vmap(model.vectorise, in_axes=[tla(x_in)])(x_in)
+    y = vmap(model.vectorise_output, in_axes=[tla(y)])(y)
 
     batches = [
         { 'input': i, 'output': j }

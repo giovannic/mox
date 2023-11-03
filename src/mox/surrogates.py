@@ -1,16 +1,17 @@
+from dataclasses import dataclass
 from typing import List, Tuple, Optional
 from jaxtyping import Array, PyTree
 from flax import linen as nn
 from flax.linen import Module
 import jax.numpy as jnp
-from jax import lax
+from jax import lax, vmap
 from jax.tree_util import (
     tree_map,
     tree_structure,
     tree_unflatten,
     tree_leaves
 )
-from .utils import tree_to_vector
+from .utils import tree_to_vector, tree_leading_axes as tla
 from functools import partial
 
 class MLP(Module):
@@ -50,7 +51,8 @@ class MLP(Module):
 
         return nn.Dense(self.n_output)(x)
 
-class Surrogate(nn.Module):
+@dataclass
+class Surrogate():
     """Surrogate module.
 
     Surrogate module, which:
@@ -71,26 +73,13 @@ class Surrogate(nn.Module):
     y_var: PyTree
     y_min: PyTree
     y_max: PyTree
-    units: int
-    n_hidden: int
-    n_output: int
-    dropout_rate: float
-    batch_norm: bool
-
-    def setup(self):
-        self.nn = MLP(
-            self.units,
-            self.n_hidden,
-            self.n_output,
-            self.dropout_rate,
-            self.batch_norm
-        )
+    net: Module
 
     def __call__(self, x, training: bool) -> Array:
         x = self.vectorise(x)
 
         # predict output
-        y = self.nn(x, training)
+        y = self.net(x, training)
         return self.recover(y)
 
     def vectorise(self, x) -> Array:
@@ -100,6 +89,14 @@ class Surrogate(nn.Module):
         # vectorise
         x = tree_to_vector(x)
         return x
+
+    def vectorise_output(self, y) -> Array:
+        # standardise
+        y = tree_map(_standardise, y, self.y_mean, self.y_var)
+
+        # vectorise
+        y = tree_to_vector(y)
+        return y
 
     def recover(self, y) -> PyTree:
         # recover structure
@@ -128,7 +125,7 @@ def make_surrogate(
         n_hidden = 3,
         dropout_rate = .5,
         batch_norm = True
-    ) -> nn.Module:
+    ) -> Surrogate:
     """make_surrogate.
 
     Make a surrogate model from a function samples
@@ -141,6 +138,13 @@ def make_surrogate(
         jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
     ])
     n_output = y_boundaries[-1]
+    net = MLP(
+        units,
+        n_hidden,
+        n_output,
+        dropout_rate,
+        batch_norm
+    )
     return Surrogate(
         x_mean,
         x_var,
@@ -151,11 +155,7 @@ def make_surrogate(
         y_var,
         y_min,
         y_max,
-        units,
-        n_hidden,
-        n_output,
-        dropout_rate,
-        batch_norm
+        net
     )
 
 def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
@@ -174,9 +174,6 @@ def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
 
 def safe_summary(x: Tuple[PyTree, PyTree]) -> Tuple[PyTree, PyTree]:
     return (x[0], tree_map(lambda leaf: leaf.at[leaf == 0].set(1), x[1]))
-
-def pytree_init(key, model, x):
-    return model.init(key, tree_map(lambda x: x[0], x), training=False)
 
 def _var(x, mean, axis=None):
     return jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
@@ -220,3 +217,12 @@ def maxrelu(x: Array, max_x: Array) -> Array:
     :rtype: Array
     """
     return jnp.minimum(x, max_x)
+
+def init_surrogate(key, surrogate: Surrogate, x):
+    x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
+    return surrogate.net.init(key, x_vec, False)
+
+def apply_surrogate(surrogate: Surrogate, params: PyTree, x):
+    x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
+    y = surrogate.net.apply(params, x_vec, False)
+    return vmap(surrogate.recover)(y)
