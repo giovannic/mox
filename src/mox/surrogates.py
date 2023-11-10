@@ -11,7 +11,11 @@ from jax.tree_util import (
     tree_unflatten,
     tree_leaves
 )
-from .utils import tree_to_vector, tree_leading_axes as tla
+from .utils import (
+    tree_to_vector,
+    tree_leading_axes as tla,
+    register_dataclass_as_pytree
+)
 from functools import partial
 
 class MLP(Module):
@@ -51,6 +55,7 @@ class MLP(Module):
 
         return nn.Dense(self.n_output)(x)
 
+@register_dataclass_as_pytree
 @dataclass
 class Surrogate():
     """Surrogate module.
@@ -66,20 +71,18 @@ class Surrogate():
 
     x_mean: PyTree
     x_var: PyTree
-    y_def: PyTree
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
     y_var: PyTree
     y_min: PyTree
     y_max: PyTree
-    net: Module
 
-    def __call__(self, x, training: bool) -> Array:
+    def __call__(self, x, net: nn.Module, params: PyTree, training: bool) -> Array:
         x = self.vectorise(x)
 
         # predict output
-        y = self.net(x, training)
+        y = net(params, x, training)
         return self.recover(y)
 
     def vectorise(self, x) -> Array:
@@ -100,7 +103,11 @@ class Surrogate():
 
     def recover(self, y) -> PyTree:
         # recover structure
-        y = _recover(y, self.y_boundaries, self.y_shapes, self.y_def)
+        y = _recover(
+            y,
+            self.y_boundaries,
+            self.y_shapes, tree_structure(self.y_mean)
+        )
 
         # inverse standardise
         y = tree_map(_inverse_standardise, y, self.y_mean, self.y_var)
@@ -121,10 +128,6 @@ def make_surrogate(
         y_var_axis: Optional[PyTree] = None,
         y_min: Optional[Array] = None,
         y_max: Optional[Array] = None,
-        units = 256,
-        n_hidden = 3,
-        dropout_rate = .5,
-        batch_norm = True
     ) -> Surrogate:
     """make_surrogate.
 
@@ -137,25 +140,15 @@ def make_surrogate(
         int(i) for i in
         jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
     ])
-    n_output = y_boundaries[-1]
-    net = MLP(
-        units,
-        n_hidden,
-        n_output,
-        dropout_rate,
-        batch_norm
-    )
     return Surrogate(
         x_mean,
         x_var,
-        tree_structure(x_mean),
         y_shapes,
         y_boundaries,
         y_mean,
         y_var,
         y_min,
-        y_max,
-        net
+        y_max
     )
 
 def summary(samples: PyTree, axis:PyTree=None) -> Tuple[PyTree, PyTree]:
@@ -218,11 +211,11 @@ def maxrelu(x: Array, max_x: Array) -> Array:
     """
     return jnp.minimum(x, max_x)
 
-def init_surrogate(key, surrogate: Surrogate, x):
+def init_surrogate(key, surrogate: Surrogate, net: nn.Module, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
-    return surrogate.net.init(key, x_vec, False)
+    return net.init(key, x_vec, False)
 
-def apply_surrogate(surrogate: Surrogate, params: PyTree, x):
+def apply_surrogate(surrogate: Surrogate, net: nn.Module, params: PyTree, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
-    y = surrogate.net.apply(params, x_vec, False)
+    y = net.apply(params, x_vec, False)
     return vmap(surrogate.recover)(y)

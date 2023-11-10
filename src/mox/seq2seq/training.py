@@ -1,6 +1,7 @@
 import optax
 from jaxtyping import Array, PyTree
 from flax.training import train_state
+from flax import linen as nn
 from typing import Callable, Any
 from jax import jit, value_and_grad, random, vmap, numpy as jnp
 from .rnn import SeqInput, RNNSurrogate
@@ -10,6 +11,7 @@ def train_rnn_surrogate(
         x_in: SeqInput,
         y: PyTree,
         model: RNNSurrogate,
+        net: nn.Module,
         params: PyTree,
         loss_fn: Callable[[PyTree, PyTree], Array],
         key: Any,
@@ -47,7 +49,7 @@ def train_rnn_surrogate(
     n_batches = len(batches)
 
     state = train_state.TrainState.create(
-        apply_fn=model.net.apply,
+        apply_fn=net.apply,
         params=params,
         tx=tx
     )

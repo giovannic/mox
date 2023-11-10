@@ -55,6 +55,7 @@ def train_surrogate(
         x: list[PyTree],
         y: PyTree,
         model: Surrogate,
+        net: nn.Module,
         loss_fn: Callable[[PyTree, PyTree], Array],
         key: Any,
         variables: PyTree,
@@ -95,7 +96,7 @@ def train_surrogate(
     n_batches = len(batches)
 
     state = TrainState.create(
-        apply_fn=model.net.apply,
+        apply_fn=net.apply,
         params=params,
         batch_stats=batch_stats,
         tx=tx

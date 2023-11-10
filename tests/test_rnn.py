@@ -8,12 +8,14 @@ from mox.seq2seq.rnn import (
     _vectorise_sequence,
     _recover_sequence,
     init_surrogate,
-    apply_surrogate
+    apply_surrogate,
+    DecoderLSTMCell
 )
 from mox.seq2seq.training import train_rnn_surrogate
 from mox.utils import tree_leading_axes as tla
-from .helpers.utils import assert_tree_equal
+from .helpers.utils import assert_tree_equal, assert_tree_roughly_equal
 from mox.loss import mse
+from flax import linen as nn
 
 def test_timeseries_fill_works():
     max_timestep = jnp.array(10)
@@ -130,7 +132,7 @@ def test_surrogate_vectorise_output_and_recover_are_consistent():
     )(y_expected)
     assert y_vec.shape == (2, 2, 2)
     y = vmap(model.recover)(y_vec)
-    assert_tree_equal(y, y_expected, 1e-5)
+    assert_tree_roughly_equal(y, y_expected, 1e-5)
 
 def test_e2e_timeseries():
     x = [{
@@ -151,14 +153,16 @@ def test_e2e_timeseries():
     model = make_rnn_surrogate(x, x_seq, x_t, n_steps, y)
     key = random.PRNGKey(42)
     x_in = (x, x_seq)
-    params = init_surrogate(key, model, x_in)
-    y_hat = apply_surrogate(model, params, x_in)
+    net = nn.RNN(DecoderLSTMCell(5, 5))
+    params = init_surrogate(key, model, net, x_in)
+    y_hat = apply_surrogate(model, net, params, x_in)
     assert params is not None
     assert y_hat[0].shape == (2, 8, 5)
     params = train_rnn_surrogate(
         x_in,
         y,
         model,
+        net,
         params,
         mse,
         key,

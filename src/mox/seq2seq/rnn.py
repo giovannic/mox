@@ -1,5 +1,3 @@
-# Adapted from flax seq2seq examples:
-# https://github.com/google/flax/blob/main/examples/seq2seq/
 from typing import Tuple, Optional, List, Any
 from jaxtyping import Array, PyTree
 from flax import linen as nn
@@ -20,7 +18,12 @@ from ..surrogates import (
     _inverse_standardise
 )
 
-from ..utils import tree_to_vector, unbatch_tree, tree_leading_axes as tla
+from ..utils import (
+    tree_to_vector,
+    unbatch_tree,
+    tree_leading_axes as tla,
+    register_dataclass_as_pytree
+)
 
 from dataclasses import dataclass
 
@@ -56,6 +59,7 @@ class DecoderLSTMCell(nn.RNNCellBase):
     def num_feature_axes(self) -> int:
         return 1
 
+@register_dataclass_as_pytree
 @dataclass
 class RNNSurrogate():
     n_steps: Array
@@ -64,18 +68,16 @@ class RNNSurrogate():
     x_seq_mean: PyTree
     x_seq_var: PyTree
     filler_pattern: Array
-    y_def: PyTree
     y_shapes: List[Tuple]
     y_boundaries: Tuple
     y_mean: PyTree
     y_var: PyTree
     y_min: PyTree
     y_max: PyTree
-    net: nn.Module
 
-    def __call__(self, x: SeqInput) -> Array:
+    def __call__(self, x: SeqInput, net: nn.Module, params: PyTree) -> Array:
         x_vec = self.vectorise(x)
-        y = self.net(x_vec)
+        y = net.apply(params, x_vec)
         return self.recover(y)
 
     def vectorise(self, x: SeqInput) -> Array:
@@ -109,7 +111,7 @@ class RNNSurrogate():
         y = _recover_sequence(
             y,
             self.y_shapes,
-            self.y_def,
+            tree_structure(self.y_mean),
             self.y_boundaries,
             self.n_steps
         )
@@ -144,8 +146,7 @@ def make_rnn_surrogate(
     x_seq_var_axis: Optional[PyTree] = None,
     y_var_axis: Optional[PyTree] = None,
     y_min: Optional[Array] = None,
-    y_max: Optional[Array] = None,
-    units = 256,
+    y_max: Optional[Array] = None
     ):
     if x_seq_var_axis is None:
         x_seq_var_axis = default_aggregation_axes(x_seq)
@@ -160,9 +161,6 @@ def make_rnn_surrogate(
         int(i) for i in
         jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
     ])
-    n_output = y_boundaries[-1]
-
-    rnn = nn.RNN(DecoderLSTMCell(units, n_output))
 
     return RNNSurrogate(
         n_steps,
@@ -171,14 +169,12 @@ def make_rnn_surrogate(
         x_seq_mean,
         x_seq_var,
         _filler(x_t, n_steps),
-        tree_structure(y_mean),
         y_shapes,
         y_boundaries,
         y_mean,
         y_var,
         y_min,
-        y_max,
-        rnn
+        y_max
     )
 
 def _vectorise_sequence(x: PyTree) -> Array:
@@ -213,11 +209,11 @@ def default_aggregation_axes(x: PyTree) -> PyTree:
     """
     return tree_map(lambda _: (0, 1), x)
 
-def init_surrogate(key, surrogate: RNNSurrogate, x):
+def init_surrogate(key, surrogate: RNNSurrogate, net: nn.Module, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
-    return surrogate.net.init(key, x_vec)
+    return net.init(key, x_vec)
 
-def apply_surrogate(surrogate: RNNSurrogate, params: PyTree, x):
+def apply_surrogate(surrogate: RNNSurrogate, net: nn.Module, params: PyTree, x):
     x_vec = vmap(surrogate.vectorise, in_axes=[tla(x)])(x)
-    y = surrogate.net.apply(params, x_vec)
+    y = net.apply(params, x_vec)
     return vmap(surrogate.recover)(y)
