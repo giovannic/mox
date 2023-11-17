@@ -108,8 +108,9 @@ def test_rnn_can_be_serialised_with_orbax(tmp_path):
     params = model.init(random.PRNGKey(0), jnp.ones((1, 2, 2)))
     orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
     ckpt = {'cell': dataclasses.asdict(model.cell), 'params': params}
+    empty_model = nn.RNN(DecoderLSTMCell(2, 2))
     empty_checkpoint = {
-        'cell': dataclasses.asdict(model.cell),
+        'cell': dataclasses.asdict(empty_model.cell),
         'params': model.init(random.PRNGKey(42), jnp.ones((1, 2, 2)))
     }
     save_args = orbax_utils.save_args_from_target(ckpt)
