@@ -107,6 +107,10 @@ class RNNSurrogate():
         # vectorise
         return _vectorise_sequence(y)
 
+    def get_output_dim(self, y: PyTree) -> int:
+        vec = vmap(self.vectorise_output, in_axes=[tla(y)])(y)
+        return vec.shape[-1]
+
     def recover(self, y: Any) -> PyTree:
         y = _recover_sequence(
             y,
@@ -136,6 +140,54 @@ class RNNSurrogate():
 
         return y
 
+class RNNDensitySurrogate(RNNSurrogate):
+
+    def recover(self, y: Any) -> PyTree:
+        mu, log_sigma = y
+        mu = _recover_sequence(
+            mu,
+            self.y_shapes,
+            tree_structure(self.y_mean),
+            self.y_boundaries,
+            self.n_steps
+        )
+
+        mu = unbatch_tree(
+            tree_map(_inverse_standardise, mu, self.y_mean, self.y_var)
+        )
+
+        if self.y_min is not None:
+            mu = tree_map(
+                lambda y, y_min: minrelu(y, y_min),
+                mu,
+                self.y_min
+            )
+
+        if self.y_max is not None:
+            mu = tree_map(
+                lambda y, y_max: maxrelu(y, y_max),
+                mu,
+                self.y_max
+            )
+
+        log_sigma = _recover_sequence(
+            log_sigma,
+            self.y_shapes,
+            tree_structure(self.y_mean),
+            self.y_boundaries,
+            self.n_steps
+        )
+
+        log_sigma = unbatch_tree(
+            tree_map(
+                lambda leaf, y_var: leaf + .5 * jnp.log(y_var),
+                log_sigma,
+                self.y_var
+            )
+        )
+
+        return mu, log_sigma
+
 def make_rnn_surrogate(
     x: list[PyTree],
     x_seq: list[PyTree],
@@ -146,7 +198,8 @@ def make_rnn_surrogate(
     x_seq_var_axis: Optional[PyTree] = None,
     y_var_axis: Optional[PyTree] = None,
     y_min: Optional[Array] = None,
-    y_max: Optional[Array] = None
+    y_max: Optional[Array] = None,
+    density: bool = False
     ):
     if x_seq_var_axis is None:
         x_seq_var_axis = default_aggregation_axes(x_seq)
@@ -162,6 +215,21 @@ def make_rnn_surrogate(
         jnp.cumsum(jnp.array([jnp.prod(jnp.array(s)) for s in y_shapes]))
     ])
 
+    if density:
+        return RNNDensitySurrogate(
+            n_steps,
+            x_mean,
+            x_var,
+            x_seq_mean,
+            x_seq_var,
+            _filler(x_t, n_steps),
+            y_shapes,
+            y_boundaries,
+            y_mean,
+            y_var,
+            y_min,
+            y_max
+        )
     return RNNSurrogate(
         n_steps,
         x_mean,

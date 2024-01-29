@@ -72,7 +72,7 @@ def train_surrogate(
     :param y: Function outputs
     :type y: Array
     :param loss: Loss function for training
-    :type loss: Callable[[Array, Array], float]
+    :type loss: Callable[[PyTree, PyTree], float]
     :rtype: nn.Module
     """
     params = variables['params']

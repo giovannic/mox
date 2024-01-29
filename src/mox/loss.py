@@ -12,7 +12,7 @@ import flax.linen as nn
 
 LossSignature = Callable[[nn.Module, PyTree, PyTree, PyTree], Array]
 
-def mse(x: PyTree, y: PyTree) -> Array:
+def mse(x: Array, y: Array) -> Array:
     return jnp.mean(jnp.square(_diffs(x, y)))
 
 def log_cosh(x: PyTree, y: PyTree) -> Array:
