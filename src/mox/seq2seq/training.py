@@ -6,6 +6,7 @@ from typing import Callable, Any
 from jax import jit, value_and_grad, random, vmap, numpy as jnp
 from .rnn import SeqInput, RNNSurrogate
 from ..utils import tree_leading_axes as tla
+import jax
 
 def train_rnn_surrogate(
         x_in: SeqInput,
@@ -17,7 +18,8 @@ def train_rnn_surrogate(
         key: Any,
         epochs: int = 100,
         batch_size: int = 100,
-        optimiser: Any = None
+        optimiser: Any = None,
+        vectorising_device = None
     ) -> PyTree:
     """train_seq2seq_surrogate
 
@@ -37,14 +39,15 @@ def train_rnn_surrogate(
         tx = optimiser
 
     # standardise x and y
-    x = vmap(model.vectorise, in_axes=[tla(x_in)])(x_in)
-    y = vmap(model.vectorise_output, in_axes=[tla(y)])(y)
+    with jax.default_device(vectorising_device):
+        x = vmap(model.vectorise, in_axes=[tla(x_in)])(x_in)
+        y = vmap(model.vectorise_output, in_axes=[tla(y)])(y)
 
-    batches = [
-        { 'input': i, 'output': j }
-        for i, j
-        in zip(jnp.split(x, batch_size), jnp.split(y, batch_size))
-    ]
+        batches = [
+            { 'input': i, 'output': j }
+            for i, j
+            in zip(jnp.split(x, batch_size), jnp.split(y, batch_size))
+        ]
 
     n_batches = len(batches)
 

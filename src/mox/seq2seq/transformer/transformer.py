@@ -1,4 +1,4 @@
-from typing import Callable, Any, Optional, Tuple
+from typing import Callable, Any, Optional
 from jaxtyping import Array
 import flax.linen as nn
 from jax import numpy as jnp, lax
