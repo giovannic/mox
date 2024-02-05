@@ -169,7 +169,10 @@ def safe_summary(x: Tuple[PyTree, PyTree]) -> Tuple[PyTree, PyTree]:
     return (x[0], tree_map(lambda leaf: leaf.at[leaf == 0].set(1), x[1]))
 
 def _var(x, mean, axis=None):
-    return jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean)
+    return jnp.maximum(
+        jnp.mean(jnp.square(x), axis, keepdims=True) - jnp.square(mean),
+        jnp.array(0., dtype=x.dtype)
+    )
 
 def _standardise(x, mu, var):
     return jnp.subtract(x, mu) * lax.rsqrt(var)
